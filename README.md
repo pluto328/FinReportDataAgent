@@ -170,44 +170,141 @@
 
 ---
 
-## 目录结构（核心）
+## 目录结构
 
 ```
-app/
-├── core/
-│   ├── agent/
-│   │   ├── graph.py              # LangGraph 编译
-│   │   ├── state.py              # AgentState / AgentRuntime
-│   │   ├── runner.py             # run_agent_stream / SSE
-│   │   ├── events.py             # ProgressEmitter / invoke_llm_*
-│   │   ├── prompts/              # 三套 LLM 提示词（与线上一致）
-│   │   └── nodes/
-│   │       ├── planner.py
-│   │       ├── planning_tool.py
-│   │       ├── retriever.py
-│   │       ├── data_processor.py
-│   │       ├── data_tool.py
-│   │       ├── reporter.py
-│   │       ├── report_tool.py
-│   │       ├── retrieve_knowledge.py
-│   │       └── retrieve_data.py
-│   ├── session/
-│   │   └── history_store.py      # session_history.json 读写
-│   └── tools/
-│       ├── plan/                 # plan_registry
-│       ├── data/                 # data_registry
-│       ├── report/               # report_registry
-│       ├── registry.py
-│       ├── structured_ops.py
-│       └── artifact_utils.py
-├── api/                          # /documents /search /report
-└── infrastructure/               # ES / Chroma HTTP / LLM / Embedding
-
-data/
-├── raw_docs/                     # 文本源
-├── raw_structured/               # 结构化源
-├── parsed_cache/{session_id}/    # 处理产物 + session_history.json
-└── reports/{session_id}/         # report.md + 图表
+Knowledge_Rag_System_Agent/
+├── app/
+│   ├── main.py                         # FastAPI 入口、lifespan、启动时 sync_all / 挂载路由
+│   ├── dependencies.py                 # DI 容器：检索器、工具注册表、LLM、LangGraph 编译
+│   ├── config/
+│   │   ├── settings.py                 # 环境变量、路径、检索开关与权重
+│   │   └── paths.py                    # PROJECT_ROOT、跨平台路径归一化
+│   ├── common/
+│   │   └── logger.py                   # loguru 初始化与封装
+│   ├── schemas/
+│   │   ├── query.py                    # /search、/report 请求体与流式事件
+│   │   ├── session.py                  # session_id、new_session 等会话字段
+│   │   ├── document.py                 # 文档上传/元数据
+│   │   ├── structured.py               # PendingToolCall、ProcessedDataRef、中间数据目录
+│   │   └── metrics.py                  # 评测指标结构
+│   ├── api/
+│   │   ├── __init__.py                 # mount_routes：聚合子路由
+│   │   ├── doc_api.py                  # /documents 上传、删除、触发索引同步
+│   │   ├── search_api.py               # /search/stream SSE 知识问答（主 Agent 流）
+│   │   └── report_api.py               # /report/stream SSE 报告模式
+│   ├── core/
+│   │   ├── agent/                      # ── LangGraph Agent 主链路 ──
+│   │   │   ├── graph.py                # 7 节点 StateGraph 编译与条件边
+│   │   │   ├── state.py                # AgentState、AgentRuntime、NodeFlags
+│   │   │   ├── runner.py               # run_agent_stream：建图、加载 catalog、SSE 驱动
+│   │   │   ├── events.py               # ProgressEmitter、invoke_llm_decision/report
+│   │   │   ├── llm_capture.py          # CAPTURE_LLM_IO=1 时落盘 prompt/输出
+│   │   │   ├── query_guard.py          # 查询长度与敏感词守卫
+│   │   │   ├── prompts/
+│   │   │   │   ├── planner_prompt.py       # 规划 LLM：是否检索/处理/报告、工具选择
+│   │   │   │   ├── data_processor_prompt.py # 数据处理 LLM：步骤与 intermediate_data
+│   │   │   │   └── reporter_prompt.py      # 报告 LLM：Markdown + summary JSON
+│   │   │   └── nodes/
+│   │   │       ├── planner.py              # 规划节点：解析 LLM JSON → pending_tool
+│   │   │       ├── planning_tool.py          # 执行 plan 工具（load_history_context）
+│   │   │       ├── retriever.py              # 双路检索编排入口
+│   │   │       ├── retrieve_knowledge.py     # 知识库 chunk 检索（ES/BM25/Dense 融合）
+│   │   │       ├── retrieve_data.py          # 结构化元数据检索（keyword + dense）
+│   │   │       ├── data_processor.py         # 数据处理 LLM 决策循环
+│   │   │       ├── data_tool.py              # 执行 data 工具并写 processed 产物
+│   │   │       ├── reporter.py               # 报告 LLM 循环、持久化 session 轮次
+│   │   │       ├── report_tool.py            # 执行 read_data_file 等 report 工具
+│   │   │       ├── _routes.py                # 各节点后条件路由（phase → 下一节点）
+│   │   │       ├── _helpers.py               # LLM JSON 解析、状态补丁
+│   │   │       ├── _node_log.py              # 节点 INFO 结构化日志
+│   │   │       └── _debug_runtime.py         # prompt_debug 脚本用 sample_state
+│   │   ├── session/                    # ── 会话持久化 ──
+│   │   │   ├── history_store.py            # parsed_cache/{id}/session_history.json
+│   │   │   └── process_artifact_store.py   # intermediate_data_catalog + processed/ 路径
+│   │   ├── tools/                      # ── 可调用工具（7 个）──
+│   │   │   ├── registry.py                   # plan/data/report 三套 ToolRegistry
+│   │   │   ├── base_tool.py                  # BaseTool 抽象与 execute 约定
+│   │   │   ├── structured_ops.py             # read_table / write_table 等表 IO
+│   │   │   ├── artifact_utils.py             # processed 文件命名与落盘路径
+│   │   │   ├── plan/
+│   │   │   │   └── load_history_context.py   # 加载会话 history + context_text
+│   │   │   ├── data/
+│   │   │   │   ├── preview_read.py           # 预览原始表，不落盘
+│   │   │   │   ├── data_filter.py            # 条件过滤 → processed
+│   │   │   │   ├── sql_execute.py            # DuckDB SQL → processed
+│   │   │   │   ├── pandas_execute.py         # pandas 代码 → processed
+│   │   │   │   ├── make_chart.py             # 图表工具入口
+│   │   │   │   └── chart_render.py           # matplotlib 渲染 PNG
+│   │   │   └── report/
+│   │   │       └── read_data_file.py         # 读取 processed/报告文件全文
+│   │   ├── retrieval/                  # ── 检索与重排 ──
+│   │   │   ├── base.py                       # Retriever 协议
+│   │   │   ├── es_retriever.py               # Elasticsearch 全文
+│   │   │   ├── bm25_retriever.py             # 内存 BM25
+│   │   │   ├── dense_retriever.py            # Chroma 向量 chunk 检索
+│   │   │   ├── ensemble.py                   # 多路 chunk 分数融合
+│   │   │   ├── meta_keyword_retriever.py     # 结构化表名/字段 keyword
+│   │   │   ├── meta_dense_retriever.py       # 结构化元数据向量检索
+│   │   │   ├── meta_ensemble.py              # 元数据双路融合
+│   │   │   ├── reranker.py                   # bge-reranker 交叉编码重排
+│   │   │   └── score_filter.py               # 分数阈值过滤
+│   │   └── ingestion/                  # ── 入库流水线 ──
+│   │       ├── parser.py                     # PDF/文本解析
+│   │       ├── chunker.py                    # 文本分块
+│   │       ├── meta_extractor.py             # CSV 等结构化元数据抽取
+│   │       └── updater.py                    # 监听目录 → ES + Chroma 增量同步
+│   └── infrastructure/                 # ── 外部服务客户端 ──
+│       ├── es_client.py                      # Elasticsearch 封装
+│       ├── vector_client.py                  # Chroma HTTP / 本地持久化
+│       ├── embedding_service.py              # bge-m3 向量化
+│       ├── llm_client.py                     # OpenAI 兼容 LLM 流式调用
+│       ├── hf_hub_config.py                  # HF_HOME / 镜像配置
+│       ├── chroma_bootstrap.py               # Chroma collection 初始化
+│       ├── chroma_lock.py                    # 本地 Chroma 文件锁
+│       └── chroma_telemetry.py               # 关闭 Chroma 遥测
+├── scripts/
+│   ├── monitor.py                      # watchdog 监听 raw_docs + raw_structured → sync
+│   ├── run_query_capture_llm.py        # E2E 跑一条 query 并捕获 LLM I/O
+│   ├── score_chunk_query.py            # 单 query chunk 打分调试
+│   ├── reset_chroma_chunks.py          # 清空 Chroma chunk collection
+│   ├── test_chroma_upsert.py           # Chroma 写入冒烟
+│   ├── check_es_health.py              # ES 连通检查
+│   ├── check_chroma_import.py          # Chroma 依赖检查
+│   ├── check_hf_hub.py                 # HuggingFace 模型缓存检查
+│   ├── check_docker_registry.py        # Docker 镜像源检查
+│   └── prompt_debug/                   # 不启 FastAPI，单节点 LLM 调试
+│       ├── common.py                       # 输出到 debug_output/、拼 prompt
+│       ├── run_planner.py
+│       ├── run_data_processor.py
+│       ├── run_reporter.py
+│       └── samples/                        # 各节点默认 state JSON
+│           ├── planner_default.json
+│           ├── data_processor_default.json
+│           └── reporter_default.json
+├── eval/
+│   ├── gen_testset.py                  # 生成评测集
+│   └── rag_metric_eval.py              # RAG 指标评测
+├── frontend/
+│   └── index.html                      # 简易 SSE 聊天/报告前端
+├── data/                               # ── 数据目录（运行时本地生成）──
+│   ├── raw_docs/                       # 文本/PDF 源（.gitignore，仅本地）
+│   ├── raw_structured/                 # CSV 等结构化源（.gitignore，仅本地）
+│   ├── parsed_cache/{session_id}/      # 会话工作区（.gitignore）
+│   │   ├── session_history.json            # 多轮问答摘要
+│   │   ├── intermediate_data_catalog.json  # 中间数据 path → 说明
+│   │   └── processed/                    # 工具产物 *_processed.{csv,json,png}
+│   ├── persist_db/                     # Chroma 向量持久化（.gitignore）
+│   ├── hf_cache/                       # HuggingFace 模型缓存（.gitignore）
+│   └── reports/{session_id}/           # report.md + 图表（.gitignore）
+├── logs/                               # 应用日志（.gitignore）
+├── debug_output/                       # prompt_debug / LLM capture（.gitignore）
+│   └── llm_io/                         # CAPTURE_LLM_IO 落盘 .md/.json
+├── eval/test_result/                   # 评测输出（.gitignore）
+├── docker-compose.yml                  # ES + Chroma 本地编排
+├── pyproject.toml                      # Poetry 依赖与脚本入口
+├── .env.example                        # 环境变量模板
+└── template.py                         # 财务指标计算函数样例（未接入 registry）
 ```
 
 ---
