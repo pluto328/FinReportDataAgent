@@ -19,7 +19,7 @@ def _entry_validation_rules(has_history: bool) -> str:
         else ""
     )
     return (
-        "0. 入口校验：若用户输入为寒暄闲聊、意义不明、或与金融/研报/企业数据/投资/财报无关，"
+        "入口校验：若用户输入为寒暄闲聊、意义不明、或与金融/研报/企业数据/投资/财报无关，"
         '则 action=reject 并填 reject_reason（chitchat|unclear|non_finance）。'
         f"{history_note}\n"
     )
@@ -47,27 +47,27 @@ def build_planner_prompt(state: AgentState, runtime: AgentRuntime) -> str:
         else '"action":"call_tool|done",'
     )
     entry_rules = _entry_validation_rules(has_history) if is_entry_pass else ""
-
+    operation_rules ="""若只涉及数据计算且历史数据不包含所需数据，则进行数据检索，
+    若需要阅读相关报告才能得出结论，则进行知识检索，
+    若所得结果涉及对比、排名、趋势、且数据量有限且适合用二维图表示则进行图表生成。
+    若问题复杂/需要分析/涉及多维度/需要综合判断/给出建议/结论/则进行报告生成。
+    若用户输入明确流程，则按照用户需求决定"""
     return (
-        "你是任务规划器。先判断用户问题是否有效，再决定是否需要结合会话历史、规划工具或完成规划。输出 JSON：\n"
-        "{" + reject_schema +
-        '"tool_name":"load_history_context",'
-        '"params":{},'
-        '"text_query":"","data_query":"","data_process_description":"",'
-        '"enable_knowledge_retrieve":true,"enable_data_retrieve":false,'
-        '"enable_process":false,"enable_chart":false,"enable_report":false}\n'
-        f"可用规划工具:\n{tool_catalog}\n"
-        f"data-processor 可用工具:\n{data_catalog}\n"
-        f"已执行规划步骤({plan_step}/{max_steps}):\n{plan_history}\n"
-        f"已加载历史上下文:\n{loaded_hint}\n"
-        f"当前问题:{query}\n"
-        "规则：\n"
+        "你是任务规划器。你需要：1.判断用户问题是否有效，规则为"
         f"{entry_rules}"
-        "1. 先判断当前问题是否需要结合前文（指代、追问、承接上文、省略主语等）；"
-        "若需要且尚未 load_history_context，则 action=call_tool、tool_name=load_history_context、params 为空。\n"
-        "2. 已加载历史后，结合 history 与当前问题填写 text_query、data_query，再 action=done。\n"
-        "3. 明显独立新话题且无需历史时，直接 action=done。\n"
-        "4. 规划完成时 action=done 并填写 enable_*、query 与 data_process_description。"
+        "2.判断问题含有刚才/之前/继续/上述/同样等追问上文时，调用工具load_history_context。"
+        "3.分析问题，有历史内容时结合历史问题分析，判断具体需求，确定以下操作是否进行:知识检索、数据检索、数据处理、图表生成、报告生成。并填写enable_*，填true或false。规则为"
+        f"{operation_rules}\n"
+        "4.如果需要进行文本检索，提取需求，将检索关键词尽量官方、大众、容易搜索到的词语进行优化、补充和同义替换，并填写text_query。\n"
+        "5.如果需要数据处理，分点标号、列出处理步骤，大致描述为取数据、数据处理、数据计算、保存结果、是否画图。填写data_process_description。\n"
+        f"当前问题:{query}\n"
+        "仅输出 JSON，不要输出任何其他内容：\n"
+        "{" + reject_schema +
+        '"text_query":"","data_query":"","data_process_description":"",'
+        '"enable_knowledge_retrieve":false,"enable_data_retrieve":false,'
+        '"enable_process":false,"enable_chart":false,"enable_report":false}\n'
+        f"已调用plantool：({plan_step}/{max_steps}):\n{plan_history}\n"
+        f"已加载历史上下文:\n{loaded_hint}\n"
     )
 
 
