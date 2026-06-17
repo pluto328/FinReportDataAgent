@@ -1,0 +1,9 @@
+{
+  "user_query": "总结检索到的研报观点",
+  "plan_context": {"step_count": 1, "latest": {"result": "ok"}},
+  "data_process_description": "无需额外处理",
+  "report_steps": [],
+  "report_step": 0,
+  "knowledge_chunks": [],
+  "meta_hits": []
+}

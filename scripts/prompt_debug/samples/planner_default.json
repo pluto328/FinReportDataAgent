@@ -1,0 +1,10 @@
+{
+  "user_query": "继续分析刚才那家公司的营收趋势",
+  "chat_history": [
+    {"role": "user", "content": "分析某公司2025年营收"},
+    {"role": "assistant", "content": "该公司2025年营收同比增长…"}
+  ],
+  "plan_steps": [],
+  "plan_step": 0,
+  "plan_done": false
+}

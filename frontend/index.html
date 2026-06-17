@@ -1,0 +1,1052 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Knowledge RAG Agent</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --surface: #1a2332;
+      --surface-hover: #243044;
+      --border: #2d3a4f;
+      --text: #e7ecf3;
+      --text-muted: #8b9cb3;
+      --accent: #3b82f6;
+      --accent-hover: #2563eb;
+      --user-bg: #1e3a5f;
+      --assistant-bg: #1e293b;
+      --success: #22c55e;
+      --warn: #f59e0b;
+      --radius: 12px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      line-height: 1.55;
+    }
+
+    .app {
+      max-width: 920px;
+      margin: 0 auto;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      padding: 1rem 1.25rem 0;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+
+    header h1 { font-size: 1.25rem; font-weight: 600; }
+    header h1 span { color: var(--accent); font-weight: 500; }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .session-badge {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      background: var(--surface);
+      padding: 0.35rem 0.65rem;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      max-width: 180px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .btn {
+      border: none;
+      border-radius: 8px;
+      padding: 0.5rem 1rem;
+      font-size: 0.875rem;
+      cursor: pointer;
+      transition: background 0.15s, opacity 0.15s;
+    }
+
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+    .btn-ghost {
+      background: var(--surface);
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+    }
+    .btn-ghost:hover { background: var(--surface-hover); color: var(--text); }
+    .btn-sm { padding: 0.3rem 0.65rem; font-size: 0.75rem; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .settings {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 0.75rem;
+      align-items: end;
+      padding: 0.75rem 0;
+      font-size: 0.8125rem;
+    }
+
+    .settings label { display: flex; flex-direction: column; gap: 0.25rem; color: var(--text-muted); }
+
+    .settings input[type="text"] {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.5rem 0.75rem;
+      color: var(--text);
+      font-size: 0.875rem;
+    }
+
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      color: var(--text-muted);
+      padding-bottom: 0.35rem;
+    }
+
+    .toggle-row input { width: auto; accent-color: var(--accent); }
+
+    .chat-wrap {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      position: relative;
+    }
+
+    .chat {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1rem 0;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      min-height: 320px;
+      max-height: calc(100vh - 260px);
+      scroll-behavior: smooth;
+    }
+
+    .chat.waiting { opacity: 0.92; }
+
+    .chat-empty {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-muted);
+      text-align: center;
+      padding: 2rem;
+      gap: 0.5rem;
+    }
+
+    .chat-empty p { font-size: 0.9375rem; max-width: 420px; }
+
+    .msg {
+      display: flex;
+      flex-direction: column;
+      max-width: 85%;
+      animation: fadeIn 0.25s ease;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .msg.user { align-self: flex-end; }
+    .msg.assistant { align-self: flex-start; }
+
+    .msg-role {
+      font-size: 0.6875rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      margin-bottom: 0.35rem;
+      padding: 0 0.25rem;
+    }
+
+    .msg.user .msg-role { text-align: right; }
+
+    .msg-bubble {
+      padding: 0.85rem 1rem;
+      border-radius: var(--radius);
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 0.9375rem;
+      cursor: default;
+      transition: box-shadow 0.15s, border-color 0.15s;
+    }
+
+    .msg.clickable .msg-bubble {
+      cursor: pointer;
+    }
+
+    .msg.clickable .msg-bubble:hover {
+      box-shadow: 0 0 0 1px var(--accent);
+    }
+
+    .msg.branch-point .msg-bubble {
+      box-shadow: 0 0 0 2px var(--accent);
+    }
+
+    .msg.user .msg-bubble {
+      background: var(--user-bg);
+      border: 1px solid #2a5080;
+      border-bottom-right-radius: 4px;
+    }
+
+    .msg.assistant .msg-bubble {
+      background: var(--assistant-bg);
+      border: 1px solid var(--border);
+      border-bottom-left-radius: 4px;
+    }
+
+    .msg.typing .msg-bubble {
+      color: var(--text-muted);
+      font-style: italic;
+      border-style: dashed;
+    }
+
+    .msg-actions {
+      margin-top: 0.35rem;
+      display: flex;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+    }
+
+    .msg.user .msg-actions { justify-content: flex-end; }
+
+    .msg-action {
+      font-size: 0.6875rem;
+      color: var(--accent);
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 0.15rem 0.25rem;
+      opacity: 0.85;
+    }
+
+    .msg-action:hover { opacity: 1; text-decoration: underline; }
+
+    .msg-meta {
+      margin-top: 0.5rem;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+    }
+
+    .tag {
+      display: inline-block;
+      padding: 0.15rem 0.45rem;
+      border-radius: 4px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+    }
+
+    .tag.ok { border-color: #166534; color: var(--success); }
+    .tag.warn { border-color: #92400e; color: var(--warn); }
+    .tag.rejected { border-color: #475569; color: var(--text-muted); }
+    .tag.error { border-color: #7f1d1d; color: #fecaca; }
+
+    .agent-steps {
+      margin-bottom: 0.65rem;
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .agent-step-line { line-height: 1.45; }
+    .agent-step-line.running { color: var(--warn); }
+    .agent-step-line.ok { color: var(--success); }
+    .agent-step-line.fail { color: #fecaca; }
+
+    .thinking-block {
+      margin-bottom: 0.65rem;
+      font-size: 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+    }
+
+    .thinking-block summary {
+      cursor: pointer;
+      padding: 0.4rem 0.6rem;
+      color: var(--text-muted);
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    .thinking-content {
+      padding: 0.5rem 0.65rem;
+      border-top: 1px solid var(--border);
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 200px;
+      overflow-y: auto;
+      font-family: ui-monospace, monospace;
+      color: var(--text-muted);
+    }
+
+    .answer-stream {
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .stream-divider {
+      border: none;
+      border-top: 1px dashed var(--border);
+      margin: 0.5rem 0;
+    }
+
+    .msg a { color: var(--accent); text-decoration: none; }
+    .msg a:hover { text-decoration: underline; }
+
+    .charts {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-top: 0.65rem;
+    }
+
+    .charts img {
+      max-width: 100%;
+      max-height: 220px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+
+    details.retrieval {
+      margin-top: 0.5rem;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+
+    details.retrieval summary { cursor: pointer; -webkit-user-select: none; user-select: none; }
+
+    details.retrieval ul {
+      margin-top: 0.35rem;
+      padding-left: 1.1rem;
+      max-height: 120px;
+      overflow-y: auto;
+    }
+
+    .composer {
+      position: sticky;
+      bottom: 0;
+      background: linear-gradient(transparent, var(--bg) 12%);
+      padding: 1rem 0 1.25rem;
+      border-top: 1px solid var(--border);
+    }
+
+    .composer-inner {
+      display: flex;
+      gap: 0.65rem;
+      align-items: flex-end;
+    }
+
+    .composer textarea {
+      flex: 1;
+      min-height: 52px;
+      max-height: 160px;
+      resize: vertical;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.75rem 1rem;
+      color: var(--text);
+      font-size: 0.9375rem;
+      font-family: inherit;
+      line-height: 1.45;
+    }
+
+    .composer textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
+    }
+
+    .composer textarea::placeholder { color: var(--text-muted); }
+
+    .hint-bar {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      padding: 0.35rem 0 0;
+      min-height: 1.2rem;
+    }
+
+    .hint-bar strong { color: var(--accent); }
+
+    .error-toast {
+      background: #451a1a;
+      border: 1px solid #7f1d1d;
+      color: #fecaca;
+      padding: 0.65rem 1rem;
+      border-radius: 8px;
+      font-size: 0.875rem;
+      margin-bottom: 0.5rem;
+      display: none;
+    }
+
+    .error-toast.show { display: block; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>Knowledge <span>RAG</span> Agent</h1>
+      <div class="header-actions">
+        <span class="session-badge" id="sessionDisplay" title="当前会话 ID">会话: —</span>
+        <button type="button" class="btn btn-ghost" id="newSession">新会话</button>
+      </div>
+    </header>
+
+    <div class="settings">
+      <label>
+        API 地址
+        <input type="text" id="base" value="http://127.0.0.1:8000" />
+      </label>
+      <label class="toggle-row">
+        <input type="checkbox" id="report" />
+        报告模式
+      </label>
+    </div>
+
+    <div class="error-toast" id="errorToast"></div>
+
+    <div class="chat-wrap">
+      <div class="chat" id="chat"></div>
+    </div>
+
+    <div class="composer">
+      <div class="composer-inner">
+        <textarea
+          id="query"
+          rows="2"
+          placeholder="输入金融/研报/数据相关问题…（Enter 发送，Shift+Enter 换行）&#10;示例：某行业 AI 业绩突破？汇总 CSV 并画图？"
+        ></textarea>
+        <button type="button" class="btn btn-primary" id="send">发送</button>
+      </div>
+      <div class="hint-bar" id="hintBar"></div>
+    </div>
+  </div>
+
+  <script>
+    const STORAGE_SESSION = "rag_session_id";
+    const STORAGE_BASE = "rag_api_base";
+    const STORAGE_CHAT_PREFIX = "rag_chat_";
+
+    /** @type {{ role: string, content: string, meta?: object }[]} */
+    let chatHistory = [];
+    let sessionId = localStorage.getItem(STORAGE_SESSION) || "";
+    let pendingNewSession = false;
+    let branchIndex = -1;
+    let isLoading = false;
+
+    const el = {
+      base: document.getElementById("base"),
+      query: document.getElementById("query"),
+      report: document.getElementById("report"),
+      send: document.getElementById("send"),
+      chat: document.getElementById("chat"),
+      sessionDisplay: document.getElementById("sessionDisplay"),
+      newSession: document.getElementById("newSession"),
+      errorToast: document.getElementById("errorToast"),
+      hintBar: document.getElementById("hintBar"),
+    };
+
+    const savedBase = localStorage.getItem(STORAGE_BASE);
+    if (savedBase) el.base.value = savedBase;
+
+    function uuid() {
+      return "xxxxxxxxxxxx4xxxyxxxxxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+        const r = (Math.random() * 16) | 0;
+        const v = c === "x" ? r : (r & 0x3) | 0x8;
+        return v.toString(16);
+      });
+    }
+
+    function chatStorageKey() {
+      return STORAGE_CHAT_PREFIX + (sessionId || "default");
+    }
+
+    function chatHistoryForStorage() {
+      return chatHistory.map(({ role, content }) => ({ role, content }));
+    }
+
+    function saveChatToStorage() {
+      if (!sessionId) return;
+      try {
+        localStorage.setItem(chatStorageKey(), JSON.stringify(chatHistoryForStorage()));
+      } catch (_) { /* quota */ }
+    }
+
+    function loadChatFromStorage() {
+      if (!sessionId) return;
+      try {
+        const raw = localStorage.getItem(chatStorageKey());
+        if (raw) chatHistory = JSON.parse(raw);
+      } catch (_) {
+        chatHistory = [];
+      }
+    }
+
+    function ensureSession() {
+      if (!sessionId) {
+        sessionId = uuid().slice(0, 16);
+        localStorage.setItem(STORAGE_SESSION, sessionId);
+      }
+      el.sessionDisplay.textContent = "会话: " + sessionId.slice(0, 8) + "…";
+      el.sessionDisplay.title = sessionId;
+    }
+
+    function showError(msg) {
+      el.errorToast.textContent = msg;
+      el.errorToast.classList.add("show");
+      setTimeout(() => el.errorToast.classList.remove("show"), 6000);
+    }
+
+    function showHint(html) {
+      el.hintBar.innerHTML = html;
+    }
+
+    function escapeHtml(s) {
+      const d = document.createElement("div");
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    function renderEmpty() {
+      if (chatHistory.length || isLoading) return;
+      el.chat.innerHTML = `
+        <div class="chat-empty">
+          <p>企业知识库联合检索 · 多轮对话</p>
+          <p style="font-size:0.8125rem">点击历史消息可<strong style="color:var(--accent)">重新提问</strong>或<strong style="color:var(--accent)">从此追问</strong>，后续对话将被截断。</p>
+        </div>`;
+    }
+
+    function renderRetrieval(meta) {
+      const chunks = meta.knowledge_chunks || [];
+      const hits = meta.meta_hits || [];
+      if (!chunks.length && !hits.length) return "";
+      let html = `<details class="retrieval"><summary>检索来源（${chunks.length} 文本 / ${hits.length} 元数据）</summary><ul>`;
+      chunks.slice(0, 4).forEach((c) => {
+        const text = (c.chunk && c.chunk.content) ? c.chunk.content.slice(0, 120) : "";
+        const src = (c.chunk && c.chunk.source_file) || "";
+        html += `<li>${escapeHtml(src)} — ${escapeHtml(text)}…</li>`;
+      });
+      hits.slice(0, 3).forEach((h) => {
+        const name = (h.record && h.record.file_name) || "";
+        html += `<li>📊 ${escapeHtml(name)}</li>`;
+      });
+      html += "</ul></details>";
+      return html;
+    }
+
+    function renderCharts(paths) {
+      if (!paths || !paths.length) return "";
+      let html = '<div class="charts">';
+      paths.forEach((p) => {
+        const lower = String(p).toLowerCase();
+        if (lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".webp")) {
+          html += `<img src="${escapeHtml(p)}" alt="chart" onerror="this.style.display='none'" />`;
+        } else {
+          html += `<span class="tag">${escapeHtml(p.split(/[/\\]/).pop() || p)}</span>`;
+        }
+      });
+      html += "</div>";
+      return html;
+    }
+
+    function reportActionsHtml(meta) {
+      if (!meta || !meta.report_url) return "";
+      const base = el.base.value.replace(/\/$/, "");
+      const href = base + meta.report_url;
+      const fname = "report_" + (sessionId || "export").slice(0, 8) + ".md";
+      return `
+        <button type="button" class="btn btn-sm btn-ghost report-open" data-url="${escapeHtml(href)}">打开报告</button>
+        <button type="button" class="btn btn-sm btn-primary report-save" data-url="${escapeHtml(href)}" data-fname="${escapeHtml(fname)}">下载到本地</button>`;
+    }
+
+    async function saveReportToDisk(url, filename) {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("下载失败 " + res.status);
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objectUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objectUrl);
+    }
+
+    function statusTagClass(status) {
+      if (status === "ok") return "ok";
+      if (status === "error") return "error";
+      if (status === "rejected") return "rejected";
+      return "warn";
+    }
+
+    function renderMessage(item, index) {
+      const isUser = item.role === "user";
+      const div = document.createElement("div");
+      div.className = "msg " + (isUser ? "user" : "assistant");
+      if (!isLoading) div.classList.add("clickable");
+      if (index === branchIndex) div.classList.add("branch-point");
+      div.dataset.index = String(index);
+
+      let body = escapeHtml(item.content);
+      let metaHtml = "";
+
+      if (!isUser && item.meta) {
+        const m = item.meta;
+        if (m.stream_steps && m.stream_steps.length) {
+          body = `<div class="agent-steps">${m.stream_steps.map((s) =>
+            `<div class="agent-step-line">${escapeHtml(s)}</div>`
+          ).join("")}</div>` + body;
+        }
+        if (m.thinking) {
+          body = `<details class="thinking-block"><summary>思考过程</summary><div class="thinking-content">${escapeHtml(m.thinking)}</div></details>` + body;
+        }
+        metaHtml += `<span class="tag ${statusTagClass(m.status)}">${escapeHtml(m.status || "ok")}</span>`;
+        metaHtml += reportActionsHtml(m);
+        if (m.charts && m.charts.length) body += renderCharts(m.charts);
+        if (m.retrieval) body += renderRetrieval(m.retrieval);
+      }
+
+      const actionLabel = isUser ? "重新提问" : "从此追问";
+      const actionHint = isUser
+        ? "截断此问题之后的历史，填入输入框"
+        : "截断此回答之后的历史，可继续追问";
+
+      div.innerHTML = `
+        <div class="msg-role">${isUser ? "你" : "助手"}</div>
+        <div class="msg-bubble" title="${escapeHtml(actionHint)}">${body}</div>
+        <div class="msg-actions">
+          <button type="button" class="msg-action" data-action="${isUser ? "reask" : "branch"}" data-index="${index}">${actionLabel}</button>
+        </div>
+        ${metaHtml ? `<div class="msg-meta">${metaHtml}</div>` : ""}
+      `;
+      return div;
+    }
+
+    function phaseLabel(phase) {
+      const map = { planner: "规划", data_processor: "数据处理", reporter: "报告" };
+      return map[phase] || phase || "Agent";
+    }
+
+    function createStreamingBubble() {
+      const div = document.createElement("div");
+      div.className = "msg assistant typing";
+      div.id = "streamingBubble";
+      div.innerHTML = `
+        <div class="msg-role">助手</div>
+        <div class="msg-bubble">
+          <div class="agent-steps" id="streamSteps"></div>
+          <div id="streamThinkingWrap"></div>
+          <hr class="stream-divider" id="streamDivider" style="display:none" />
+          <div class="answer-stream" id="streamAnswer"></div>
+        </div>`;
+      return div;
+    }
+
+    function ensureStreamingBubble() {
+      let bubble = document.getElementById("streamingBubble");
+      if (!bubble) {
+        bubble = createStreamingBubble();
+        el.chat.appendChild(bubble);
+        scrollChatToBottom();
+      }
+      return bubble;
+    }
+
+    function appendStepLine(text, cls) {
+      const steps = document.getElementById("streamSteps");
+      if (!steps) return;
+      const line = document.createElement("div");
+      line.className = "agent-step-line " + (cls || "");
+      line.textContent = text;
+      steps.appendChild(line);
+      scrollChatToBottom();
+    }
+
+    function ensureThinkingBlock(phase) {
+      const wrap = document.getElementById("streamThinkingWrap");
+      if (!wrap) return null;
+      const id = "thinking-" + phase;
+      let block = document.getElementById(id);
+      if (!block) {
+        block = document.createElement("details");
+        block.className = "thinking-block";
+        block.id = id;
+        block.open = true;
+        block.innerHTML = `<summary>${escapeHtml(phaseLabel(phase))} 思考中…</summary><div class="thinking-content"></div>`;
+        wrap.appendChild(block);
+      }
+      return block.querySelector(".thinking-content");
+    }
+
+    function handleStreamEvent(ev, streamState) {
+      ensureStreamingBubble();
+      switch (ev.type) {
+        case "node_start":
+          appendStepLine("▶ " + (ev.node || "node"), "running");
+          break;
+        case "thinking_start":
+          streamState.currentPhase = ev.phase;
+          streamState.thinkingText = "";
+          ensureThinkingBlock(ev.phase);
+          break;
+        case "thinking_delta":
+          streamState.thinkingText = (streamState.thinkingText || "") + (ev.text || "");
+          {
+            const content = ensureThinkingBlock(ev.phase || streamState.currentPhase);
+            if (content) content.textContent = streamState.thinkingText;
+          }
+          scrollChatToBottom();
+          break;
+        case "thinking_end": {
+          const phase = ev.phase || streamState.currentPhase;
+          const block = document.getElementById("thinking-" + phase);
+          if (block) {
+            const summary = block.querySelector("summary");
+            if (summary) summary.textContent = phaseLabel(phase) + " 决策完成";
+            const content = block.querySelector(".thinking-content");
+            if (content) content.textContent = ev.raw || streamState.thinkingText || "";
+          }
+          break;
+        }
+        case "tool_start":
+          appendStepLine("⏳ " + (ev.label || ev.name), "running");
+          break;
+        case "tool_end":
+          appendStepLine((ev.ok ? "✓ " : "✗ ") + (ev.label || ev.name), ev.ok ? "ok" : "fail");
+          break;
+        case "answer_start": {
+          const divider = document.getElementById("streamDivider");
+          if (divider) divider.style.display = "block";
+          break;
+        }
+        case "answer_delta": {
+          const answerEl = document.getElementById("streamAnswer");
+          if (answerEl) {
+            streamState.answer = (streamState.answer || "") + (ev.text || "");
+            answerEl.textContent = streamState.answer;
+          }
+          scrollChatToBottom();
+          break;
+        }
+        case "answer_end":
+          if (ev.text) streamState.answer = ev.text;
+          break;
+        default:
+          break;
+      }
+    }
+
+    function parseSSEChunk(buffer) {
+      const events = [];
+      const blocks = buffer.split("\n\n");
+      const rest = blocks.pop() || "";
+      for (const block of blocks) {
+        const line = block.trim();
+        if (line.startsWith("data:")) {
+          try {
+            events.push(JSON.parse(line.slice(5).trim()));
+          } catch (_) { /* skip */ }
+        }
+      }
+      return { events, rest };
+    }
+
+    async function consumeSSE(res, streamState) {
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let donePayload = null;
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parsed = parseSSEChunk(buffer);
+        buffer = parsed.rest;
+        for (const ev of parsed.events) {
+          if (ev.type === "done") donePayload = ev;
+          else if (ev.type === "error") throw new Error(ev.message || "Agent 错误");
+          else handleStreamEvent(ev, streamState);
+        }
+      }
+      if (buffer.trim()) {
+        const parsed = parseSSEChunk(buffer + "\n\n");
+        for (const ev of parsed.events) {
+          if (ev.type === "done") donePayload = ev;
+          else if (ev.type === "error") throw new Error(ev.message || "Agent 错误");
+          else handleStreamEvent(ev, streamState);
+        }
+      }
+      return donePayload;
+    }
+
+    function renderTypingIndicator() {
+      return createStreamingBubble();
+    }
+
+    function scrollChatToBottom() {
+      requestAnimationFrame(() => {
+        el.chat.scrollTop = el.chat.scrollHeight;
+      });
+    }
+
+    function renderChat() {
+      el.chat.innerHTML = "";
+      el.chat.classList.toggle("waiting", isLoading);
+
+      if (!chatHistory.length && !isLoading) {
+        renderEmpty();
+        return;
+      }
+
+      chatHistory.forEach((item, i) => {
+        el.chat.appendChild(renderMessage(item, i));
+      });
+
+      if (isLoading) {
+        if (!document.getElementById("streamingBubble")) {
+          el.chat.appendChild(renderTypingIndicator());
+        }
+      }
+
+      el.chat.querySelectorAll(".msg-action").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const idx = parseInt(btn.dataset.index, 10);
+          if (btn.dataset.action === "reask") branchFromUserMessage(idx);
+          else branchFromAssistantMessage(idx);
+        });
+      });
+
+      el.chat.querySelectorAll(".msg.clickable .msg-bubble").forEach((bubble) => {
+        bubble.addEventListener("click", () => {
+          const msg = bubble.closest(".msg");
+          const idx = parseInt(msg.dataset.index, 10);
+          const isUser = msg.classList.contains("user");
+          if (isUser) branchFromUserMessage(idx);
+          else branchFromAssistantMessage(idx);
+        });
+      });
+
+      el.chat.querySelectorAll(".report-open").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          window.open(btn.dataset.url, "_blank", "noopener");
+        });
+      });
+
+      el.chat.querySelectorAll(".report-save").forEach((btn) => {
+        btn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          try {
+            await saveReportToDisk(btn.dataset.url, btn.dataset.fname);
+          } catch (err) {
+            showError(err.message || String(err));
+          }
+        });
+      });
+
+      scrollChatToBottom();
+    }
+
+    function branchFromUserMessage(index) {
+      if (isLoading) return;
+      const item = chatHistory[index];
+      if (!item || item.role !== "user") return;
+      chatHistory = chatHistory.slice(0, index);
+      branchIndex = index;
+      el.query.value = item.content;
+      saveChatToStorage();
+      renderChat();
+      showHint(`已回溯到第 <strong>${index + 1}</strong> 条问题之前，问题已填入输入框，可编辑后发送。`);
+      el.query.focus();
+    }
+
+    function branchFromAssistantMessage(index) {
+      if (isLoading) return;
+      const item = chatHistory[index];
+      if (!item || item.role !== "assistant") return;
+      chatHistory = chatHistory.slice(0, index + 1);
+      branchIndex = index;
+      el.query.value = "";
+      saveChatToStorage();
+      renderChat();
+      showHint(`已保留到此回答（含），后续对话已清除。请在下方输入<strong>追问</strong>。`);
+      el.query.focus();
+    }
+
+    function setLoading(on) {
+      isLoading = on;
+      el.send.disabled = on;
+      if (!on) {
+        const bubble = document.getElementById("streamingBubble");
+        if (bubble) bubble.remove();
+      }
+      renderChat();
+    }
+
+    async function sendMessage() {
+      const query = el.query.value.trim();
+      if (!query || isLoading) return;
+
+      localStorage.setItem(STORAGE_BASE, el.base.value);
+      ensureSession();
+
+      const base = el.base.value.replace(/\/$/, "");
+      const reportMode = el.report.checked;
+      const path = reportMode ? "/report/stream" : "/search/stream";
+
+      const historyPayload = chatHistory.map(({ role, content }) => ({ role, content }));
+
+      chatHistory.push({ role: "user", content: query });
+      branchIndex = -1;
+      saveChatToStorage();
+      el.query.value = "";
+      showHint("");
+      setLoading(true);
+
+      const streamState = { answer: "", thinkingText: "", steps: [] };
+
+      try {
+        const res = await fetch(base + path, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            query,
+            session_id: sessionId,
+            chat_history: historyPayload,
+            report_mode: reportMode,
+            new_session: pendingNewSession,
+          }),
+        });
+
+        if (!res.ok) {
+          let detail = res.statusText;
+          try {
+            const errJson = await res.json();
+            detail = errJson.detail || detail;
+          } catch (_) { /* not json */ }
+          throw new Error(detail || "请求失败");
+        }
+
+        ensureStreamingBubble();
+        const data = await consumeSSE(res, streamState);
+        if (!data) throw new Error("未收到完成事件");
+
+        if (data.session_id) {
+          sessionId = data.session_id;
+          pendingNewSession = false;
+          localStorage.setItem(STORAGE_SESSION, sessionId);
+          el.sessionDisplay.textContent = "会话: " + sessionId.slice(0, 8) + "…";
+          el.sessionDisplay.title = sessionId;
+        }
+
+        let answerText = streamState.answer || data.answer || data.message || "（无内容）";
+        if (reportMode && data.report_url) {
+          answerText = data.message || answerText || "报告已生成，可点击下方按钮打开或下载。";
+        }
+
+        const stepsEl = document.getElementById("streamSteps");
+        const streamSteps = stepsEl
+          ? Array.from(stepsEl.querySelectorAll(".agent-step-line")).map((n) => n.textContent)
+          : [];
+
+        const thinkingBlocks = document.querySelectorAll("#streamThinkingWrap .thinking-content");
+        const thinking = Array.from(thinkingBlocks).map((n) => n.textContent).join("\n\n");
+
+        chatHistory.push({
+          role: "assistant",
+          content: answerText,
+          meta: {
+            status: data.status,
+            report_url: data.report_url || "",
+            charts: data.chart_artifacts || [],
+            retrieval: {
+              knowledge_chunks: data.knowledge_chunks,
+              meta_hits: data.meta_hits,
+            },
+            stream_steps: streamSteps,
+            thinking: thinking,
+          },
+        });
+        saveChatToStorage();
+      } catch (err) {
+        console.error("[RAG] request failed:", err);
+        const errMsg = err.message || String(err);
+        chatHistory.push({
+          role: "assistant",
+          content:
+            "请求未成功：" +
+            errMsg +
+            "。连接可能已中断（Agent 仍可能在后台运行）。请稍后重试或查看后端日志。",
+          meta: { status: "error" },
+        });
+        saveChatToStorage();
+        showError(errMsg);
+      } finally {
+        setLoading(false);
+        el.query.focus();
+      }
+    }
+
+    el.send.addEventListener("click", sendMessage);
+
+    el.query.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+
+    el.newSession.addEventListener("click", () => {
+      sessionId = uuid().slice(0, 16);
+      pendingNewSession = true;
+      localStorage.setItem(STORAGE_SESSION, sessionId);
+      chatHistory = [];
+      branchIndex = -1;
+      ensureSession();
+      saveChatToStorage();
+      renderChat();
+      showHint("");
+      el.query.focus();
+    });
+
+    ensureSession();
+    loadChatFromStorage();
+    renderChat();
+    el.query.focus();
+  </script>
+</body>
+</html>

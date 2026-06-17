@@ -1,0 +1,97 @@
+# --- Secrets & local env ---
+.env
+.env.local
+.env.*.local
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+*.cover
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# --- Local tooling / accidental artifacts ---
+.cursor/
+.pip-cache/
+*.back
+2.6.0
+
+# --- IDE / OS ---
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Runtime logs ---
+logs/**
+!logs/.gitkeep
+debug-*.log
+
+# --- Session cache & intermediate data (parsed_cache/{session_id}/...) ---
+data/parsed_cache/**
+!data/parsed_cache/.gitkeep
+
+# --- Chroma vector persistence ---
+data/persist_db/**
+!data/persist_db/.gitkeep
+data/persist_db_test*/
+data/chroma_diag_tmp/
+
+# --- HuggingFace / embedding model cache ---
+data/hf_cache/**
+!data/hf_cache/.gitkeep
+
+# --- Generated reports & charts ---
+data/reports/**
+!data/reports/.gitkeep
+
+# --- Debug / LLM I/O capture (scripts/prompt_debug, CAPTURE_LLM_IO) ---
+debug_output/*
+!debug_output/.gitkeep
+!debug_output/llm_io/
+debug_output/llm_io/*
+!debug_output/llm_io/.gitkeep
+
+# --- Evaluation outputs ---
+eval/test_result/**
+!eval/test_result/.gitkeep
+
+# --- Source data (local only, not uploaded) ---
+data/raw_docs/**
+!data/raw_docs/.gitkeep
+data/raw_structured/**
+!data/raw_structured/.gitkeep

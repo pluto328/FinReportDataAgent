@@ -1,0 +1,11 @@
+{
+  "files.autoSave": "afterDelay",
+  "files.autoSaveDelay": 1000,
+  "liveServer.settings.root": "/frontend",
+  "liveServer.settings.ignoreFiles": [
+    "**/.git/**",
+    "**/logs/**",
+    "**/data/**",
+    "**/*.log"
+  ]
+}

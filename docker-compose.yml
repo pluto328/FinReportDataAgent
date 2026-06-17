@@ -1,0 +1,47 @@
+﻿# 默认启动 Elasticsearch + Chroma（向量库在 Linux 容器内，避免 Windows HNSW 崩溃）
+# Redis 为可选缓存，需 ENABLE_REDIS=true 时再启动：
+#   docker compose --profile redis up -d
+
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.0
+    container_name: rag-es
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=true
+      - ELASTIC_PASSWORD=elastic123
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    restart: always
+
+  chroma:
+    # Docker Hub (chromadb/chroma) 国内常超时；默认用 GitHub Container Registry
+    image: ${CHROMA_IMAGE:-ghcr.io/chroma-core/chroma:0.5.4}
+    container_name: rag-chroma
+    environment:
+      - IS_PERSISTENT=TRUE
+      - ANONYMIZED_TELEMETRY=FALSE
+      - ALLOW_RESET=TRUE
+    ports:
+      - "8001:8000"
+    volumes:
+      - chroma_data:/chroma/chroma
+    restart: always
+
+  redis:
+    profiles: ["redis"]
+    image: redis:7.2-alpine
+    container_name: rag-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: always
+
+volumes:
+  es_data:
+  chroma_data:
+  redis_data:
