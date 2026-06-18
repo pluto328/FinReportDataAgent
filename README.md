@@ -423,30 +423,186 @@ poetry run python scripts/monitor.py
 
 ---
 
-## 消融与评测
+## 脚本与评测手册
 
-文本轨：`ENABLE_ES` / `ENABLE_BM25` / `ENABLE_DENSE` 及权重。元数据轨：`ENABLE_META_KEYWORD` / `ENABLE_META_DENSE`。
+均在**仓库根目录**执行。依赖 `.env` 与 `poetry install` 已完成。
 
-```bash
-poetry run python eval/gen_testset.py
-poetry run python eval/rag_metric_eval.py
-```
-
-结果输出至 `eval/test_result/`。
+| 脚本 | 用途分类 | 测试/使用目的 |
+|------|----------|----------------|
+| `scripts/monitor.py` | 入库运维 | 监听 `raw_docs` / `raw_structured` 变更并增量同步到 ES + Chroma |
+| `scripts/run_query_capture_llm.py` | Agent E2E | 不启 FastAPI，跑完整 Agent 并落盘全部 LLM prompt/输出 |
+| `scripts/prompt_debug/run_planner.py` | Prompt 单测 | 隔离调试 planner 提示词与 LLM 响应 |
+| `scripts/prompt_debug/run_data_processor.py` | Prompt 单测 | 隔离调试 data_processor 提示词 |
+| `scripts/prompt_debug/run_reporter.py` | Prompt 单测 | 隔离调试 reporter 决策/成稿提示词 |
+| `scripts/score_chunk_query.py` | 检索调试 | 计算 query 与 chunk 的余弦相似度（可选 rerank） |
+| `scripts/check_es_health.py` | 基础设施 | 探测 Elasticsearch 连通与鉴权 |
+| `scripts/check_chroma_import.py` | 基础设施 | 验证 Chroma / onnxruntime 能否正常 import |
+| `scripts/check_hf_hub.py` | 基础设施 | 验证 HF 镜像可达性与 bge 模型元数据 |
+| `scripts/check_docker_registry.py` | 基础设施 | 探测 Docker Hub / elastic 镜像仓库 TCP 连通 |
+| `scripts/reset_chroma_chunks.py` | Chroma 维护 | 重建 `rag_collection` 并 smoke upsert（upsert 卡死/损坏恢复） |
+| `scripts/test_chroma_upsert.py` | Chroma 维护 | 批量 upsert 压测/诊断（建议停 uvicorn 后跑） |
+| `eval/gen_testset.py` | RAG 评测 | 从 `raw_docs` 用 LLM 自动生成问答评测集 |
+| `eval/rag_metric_eval.py` | RAG 评测 | 对评测集跑 ES/BM25/Dense 消融并算 Recall@K |
 
 ---
 
-## 提示词调试（独立脚本）
+### 1. 入库监听 — `scripts/monitor.py`
 
-不启动 FastAPI，单独查看三套 LLM 的完整 prompt 与流式输出，结果写入 `debug_output/`：
+**目的**：开发/运维时自动增量入库，无需手动调 `/documents/sync`。
+
+```bash
+poetry run python scripts/monitor.py
+```
+
+- 启动时先执行一次全量 `sync_all`
+- 用 watchdog 监听 `data/raw_docs`、`data/raw_structured`（debounce 2s）
+- 支持 PDF/文本与 CSV 等结构化扩展名
+- `Ctrl+C` 退出
+
+---
+
+### 2. Agent 端到端 + LLM 捕获 — `scripts/run_query_capture_llm.py`
+
+**目的**：调试完整 LangGraph 链路，记录 planner / data_processor / reporter 每次 LLM 的 prompt 与原始输出。
+
+```bash
+# 修改脚本内 QUERY 变量后执行
+poetry run python scripts/run_query_capture_llm.py
+```
+
+- 自动设置 `CAPTURE_LLM_IO=1`，`new_session=True`
+- 输出目录：`debug_output/llm_io/{时间戳}_{query}.md` 与同名的 `.json`
+- 需 LLM、ES、Chroma 可用；首次检索会加载 bge-m3（依赖 `HF_ENDPOINT` / 本地缓存）
+
+---
+
+### 3. 单节点 Prompt 调试 — `scripts/prompt_debug/`
+
+**目的**：不启动 FastAPI、不跑全图，仅用与线上一致的 `app/core/agent/prompts/` 构建 prompt，调用 LLM 并将结果写入 `debug_output/`。
+
+**公共参数**（三个 run_*.py 均支持）：
+
+| 参数 | 说明 |
+|------|------|
+| `--query` | 覆盖 state 中的 `user_query` |
+| `--state` | JSON state 文件路径（见 `samples/`） |
+| `--out` | 输出 markdown 路径（默认带时间戳文件名） |
+
+**样例 state**：`scripts/prompt_debug/samples/planner_default.json`、`data_processor_default.json`、`reporter_default.json`
+
+#### planner
 
 ```bash
 poetry run python -m scripts.prompt_debug.run_planner --query "分析某公司营收"
-poetry run python -m scripts.prompt_debug.run_data_processor --state scripts/prompt_debug/samples/data_processor_default.json
-poetry run python -m scripts.prompt_debug.run_reporter --mode both
+poetry run python -m scripts.prompt_debug.run_planner --state scripts/prompt_debug/samples/planner_default.json
 ```
 
-样例 state：`scripts/prompt_debug/samples/`。提示词定义与线上一致：`app/core/agent/prompts/`。
+**测试目的**：验证入口校验、enable_* 开关、dataprocessplan、会话历史数据目录等 planner 规则是否符合预期。
+
+#### data_processor
+
+```bash
+poetry run python -m scripts.prompt_debug.run_data_processor --query "统计前10名并画图"
+poetry run python -m scripts.prompt_debug.run_data_processor --state scripts/prompt_debug/samples/data_processor_default.json
+```
+
+**测试目的**：验证 dataprocessplan + 工具调用历史 + 可调用工具说明下的下一步决策（call_tool / done / replan）。
+
+#### reporter
+
+```bash
+poetry run python -m scripts.prompt_debug.run_reporter --mode both
+poetry run python -m scripts.prompt_debug.run_reporter --mode decision --query "汇总龙虎榜"
+poetry run python -m scripts.prompt_debug.run_reporter --mode answer --state scripts/prompt_debug/samples/reporter_default.json
+```
+
+| `--mode` | 说明 |
+|----------|------|
+| `decision` | 仅跑报告决策 prompt（call_tool / need_retrieval / done） |
+| `answer` | 仅跑最终成稿 prompt（report + summary JSON） |
+| `both` | 两者依次执行（默认） |
+
+**测试目的**：验证中间数据 catalog、图表路径、read_data_file 决策与 Markdown 成稿质量。
+
+---
+
+### 4. 检索打分 — `scripts/score_chunk_query.py`
+
+**目的**：离线验证 embedding 相似度与 `MIN_RETRIEVAL_SCORE` 阈值，不经过 ES/Chroma。
+
+```bash
+poetry run python scripts/score_chunk_query.py --query "龙虎榜" --chunk "金融产业"
+poetry run python scripts/score_chunk_query.py --query "..." --chunk-file path/to/text.txt
+poetry run python scripts/score_chunk_query.py --query "..." --chunks-json chunks.json --rerank
+poetry run python scripts/score_chunk_query.py --query "..." --chunk "..." --out scores.json
+```
+
+| 参数 | 说明 |
+|------|------|
+| `--query` | 检索问句 |
+| `--chunk` / `--chunk-file` | 单条 chunk 文本 |
+| `--chunks-json` | 批量：`[{"text":"..."}, ...]` |
+| `--rerank` | 额外计算 cross-encoder rerank 分 |
+| `--out` | 可选 JSON 输出路径 |
+
+---
+
+### 5. 基础设施诊断 — `scripts/check_*.py`
+
+**目的**：部署/联网问题排查，结果追加写入仓库根目录 `debug-72ff74.log`（NDJSON）。
+
+```bash
+poetry run python scripts/check_es_health.py      # ES HTTP + 鉴权
+poetry run python scripts/check_chroma_import.py  # chromadb / onnxruntime import
+poetry run python scripts/check_hf_hub.py         # HF 镜像 TCP + 模型 HEAD 请求
+poetry run python scripts/check_docker_registry.py # Docker Hub / docker.elastic.co 443
+```
+
+| 脚本 | 测试目的 |
+|------|----------|
+| `check_es_health.py` | 确认 ES 地址、用户名密码、集群是否可达 |
+| `check_chroma_import.py` | 排除 Chroma 因 onnx 依赖导致的 import 失败 |
+| `check_hf_hub.py` | 确认 `HF_ENDPOINT` 镜像与 bge-m3 模型元数据可拉取 |
+| `check_docker_registry.py` | 确认本机能否拉取 compose 所需 Docker 镜像 |
+
+---
+
+### 6. Chroma 维护 — `scripts/reset_chroma_chunks.py` / `test_chroma_upsert.py`
+
+**目的**：向量库异常（upsert  hang、collection 损坏、锁冲突）时的恢复与写入性能验证。
+
+```bash
+# 删除并重建 rag_collection，写入一条 smoke 向量，并清理 parsed_cache 顶层 *.json
+poetry run python scripts/reset_chroma_chunks.py
+
+# 默认 upsert 8 条诊断向量（使用 .env 中的 Chroma 配置）
+poetry run python scripts/test_chroma_upsert.py
+poetry run python scripts/test_chroma_upsert.py 32          # 指定条数
+poetry run python scripts/test_chroma_upsert.py 8 --temp    # 隔离目录 data/chroma_diag_tmp
+```
+
+> 建议在**停止 uvicorn** 后执行，避免与运行中服务争用 Chroma 文件锁或 HTTP 连接。
+
+---
+
+### 7. RAG 消融评测 — `eval/`
+
+**目的**：自动生成评测集，对比 ES-only / BM25-only / Dense-only / 混合检索的 Recall@K。
+
+```bash
+# 1. 扫描 data/raw_docs，每篇 PDF/文本生成 3 条 QA → eval/test_result/testset_*.json
+poetry run python eval/gen_testset.py
+
+# 2. 读取最新 testset，跑四种 scheme → eval/test_result/metrics_*.json
+poetry run python eval/rag_metric_eval.py
+```
+
+| 脚本 | 输入 | 输出 |
+|------|------|------|
+| `gen_testset.py` | `data/raw_docs` 文本文件 | `eval/test_result/testset_{timestamp}.json` |
+| `rag_metric_eval.py` | 上述最新 testset | `eval/test_result/metrics_{timestamp}.json` |
+
+`rag_metric_eval.py` 内置 scheme：`full_hybrid`、`es_only`、`bm25_only`、`dense_only`（由 `ENABLE_ES` / `ENABLE_BM25` / `ENABLE_DENSE` 组合切换）。
 
 ---
 
