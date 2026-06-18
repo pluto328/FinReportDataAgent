@@ -11,6 +11,9 @@ from app.config.settings import Settings, get_settings
 CATALOG_FILENAME = "intermediate_data_catalog.json"
 PROCESSED_SUBDIR = "processed"
 
+# session_id -> {absolute_path: description}
+_session_catalogs: dict[str, dict[str, str]] = {}
+
 
 def processed_dir(session_id: str, settings: Settings | None = None) -> Path:
     s = settings or get_settings()
@@ -51,14 +54,42 @@ def merge_intermediate_catalog(
     updates: dict[str, str],
     settings: Settings | None = None,
 ) -> dict[str, str]:
+    """Backward-compatible alias; prefer register_session_artifacts."""
+    return register_session_artifacts(session_id, updates, settings)
+
+
+def get_session_catalog(session_id: str, settings: Settings | None = None) -> dict[str, str]:
+    """Return session-level path catalog (memory, loaded from disk on first access)."""
+    if not session_id:
+        return {}
+    if session_id not in _session_catalogs:
+        _session_catalogs[session_id] = load_intermediate_catalog(session_id, settings)
+    return dict(_session_catalogs[session_id])
+
+
+def register_session_artifacts(
+    session_id: str,
+    updates: dict[str, str],
+    settings: Settings | None = None,
+) -> dict[str, str]:
+    """Register tool output paths and descriptions into the session catalog."""
+    if not session_id:
+        return {}
     if not updates:
-        return load_intermediate_catalog(session_id, settings)
-    catalog = load_intermediate_catalog(session_id, settings)
+        return get_session_catalog(session_id, settings)
+    catalog = get_session_catalog(session_id, settings)
     for path_key, desc in updates.items():
-        if path_key and desc is not None:
-            catalog[str(path_key)] = str(desc)
+        if path_key:
+            catalog[str(path_key)] = str(desc) if desc is not None else ""
+    _session_catalogs[session_id] = catalog
     save_intermediate_catalog(session_id, catalog, settings)
     return catalog
+
+
+def reset_session_workspace(session_id: str, settings: Settings | None = None) -> None:
+    """Clear in-memory catalog, processed files, and catalog file for a new session."""
+    _session_catalogs.pop(session_id, None)
+    clear_session_workspace(session_id, settings)
 
 
 def format_intermediate_catalog(catalog: dict[str, str]) -> str:
@@ -68,7 +99,7 @@ def format_intermediate_catalog(catalog: dict[str, str]) -> str:
 
 
 def clear_session_workspace(session_id: str, settings: Settings | None = None) -> None:
-    """Clear processed files and intermediate catalog for a session."""
+    """Clear processed files and intermediate catalog file on disk."""
     s = settings or get_settings()
     proc = processed_dir(session_id, s)
     if proc.exists():

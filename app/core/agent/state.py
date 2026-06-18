@@ -35,7 +35,7 @@ class AgentState(TypedDict, total=False):
     chat_history: list[ChatMessage]
     text_query: str
     data_query: str
-    data_process_description: str
+    dataprocessplan: str
     node_flags: NodeEnableFlags
     report_mode: bool
     session_id: str
@@ -61,7 +61,6 @@ class AgentState(TypedDict, total=False):
     data_tool_steps: Annotated[list[DataToolStepResult], operator.add]
     processed_data: Annotated[list[ProcessedDataRef], operator.add]
     processed_data_refs: Annotated[list[str], operator.add]
-    intermediate_data_catalog: dict[str, str]
     chart_artifacts: Annotated[list[ChartArtifact], operator.add]
 
     report_done: bool

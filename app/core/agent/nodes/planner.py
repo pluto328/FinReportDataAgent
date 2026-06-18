@@ -112,7 +112,7 @@ async def planner_node(state: AgentState, runtime: AgentRuntime) -> dict:
             "text_query": text_q,
             "data_query": data_q,
             "node_flags": flags,
-            "data_process_description": description,
+            "dataprocessplan": description,
             "plan_done": True,
             "pending_tool": None,
             "plan_context": summarize_plan_steps(plan_steps),
@@ -140,7 +140,7 @@ async def planner_node(state: AgentState, runtime: AgentRuntime) -> dict:
     text_q = parsed["text_query"]
     data_q = parsed["data_query"]
     flags = parsed["node_flags"]
-    data_process_description = parsed["data_process_description"]
+    dataprocessplan = parsed["dataprocessplan"]
 
     if action == "reject" and is_entry_pass:
         reason = str(parsed.get("reject_reason", "unclear"))
@@ -162,7 +162,7 @@ async def planner_node(state: AgentState, runtime: AgentRuntime) -> dict:
             enables=_flags_line(flags),
             text_query=text_q,
             data_query=data_q,
-            data_process_description=data_process_description,
+            dataprocessplan=dataprocessplan,
         )
 
     out: dict[str, Any] = {
@@ -170,7 +170,7 @@ async def planner_node(state: AgentState, runtime: AgentRuntime) -> dict:
         "text_query": text_q,
         "data_query": data_q,
         "node_flags": flags,
-        "data_process_description": data_process_description,
+        "dataprocessplan": dataprocessplan,
         **append_node(state, "planner"),
     }
 

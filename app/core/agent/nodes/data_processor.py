@@ -14,7 +14,6 @@ from app.core.agent.prompts.data_processor_prompt import (
     parse_data_processor_response,
 )
 from app.core.agent.state import AgentRuntime, AgentState
-from app.core.session.process_artifact_store import merge_intermediate_catalog
 from app.schemas.structured import PendingToolCall, ProcessedDataRef
 
 
@@ -84,20 +83,12 @@ async def data_processor_node(state: AgentState, runtime: AgentRuntime) -> dict:
         raw,
         file_path=file_path,
         current_step=current_step,
-        prior_catalog=state.get("intermediate_data_catalog"),
     )
 
     action = parsed["action"]
     tool_name = parsed["tool_name"]
     params = parsed["params"]
-    secondary_text = parsed["secondary_text_query"]
-    secondary_data = parsed["secondary_data_query"]
-    new_description = parsed["data_process_description"]
-    intermediate_data = parsed["intermediate_data"]
-    session_id = state.get("session_id", "default")
-
-    if intermediate_data:
-        merge_intermediate_catalog(session_id, intermediate_data, runtime.settings)
+    new_plan = parsed["dataprocessplan"]
 
     log.info("LLM 数据处理决策", action=action, tool_name=tool_name if action != "done" else "")
 
@@ -107,13 +98,8 @@ async def data_processor_node(state: AgentState, runtime: AgentRuntime) -> dict:
             "process_done": True,
             "pending_tool": None,
             "process_result": summary,
-            "intermediate_data_catalog": intermediate_data,
             **append_node(state, "data_processor"),
         }
-        if secondary_text:
-            out["text_query"] = secondary_text
-        if secondary_data:
-            out["data_query"] = secondary_data
         log.end(process_done=True, tool_steps=len(prior_steps))
         return out
 
@@ -125,15 +111,10 @@ async def data_processor_node(state: AgentState, runtime: AgentRuntime) -> dict:
             params=params,
             file_path=file_path,
         ),
-        "intermediate_data_catalog": intermediate_data,
         **append_node(state, "data_processor"),
     }
-    if action == "replan" and new_description:
-        out_extra["data_process_description"] = new_description
-    if secondary_text:
-        out_extra["text_query"] = secondary_text
-    if secondary_data:
-        out_extra["data_query"] = secondary_data
+    if action == "replan" and new_plan:
+        out_extra["dataprocessplan"] = new_plan
 
     log.info("触发 data tool 调用", tool_name=tool_name, params=params)
     log.end(process_done=False, next_node="data_tool", tool_name=tool_name)

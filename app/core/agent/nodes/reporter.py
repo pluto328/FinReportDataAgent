@@ -22,6 +22,7 @@ from app.core.agent.prompts.reporter_prompt import (
 from app.core.agent.state import AgentRuntime, AgentState
 from app.core.agent.query_guard import INSUFFICIENT_DATA_MESSAGE
 from app.core.session.history_store import append_session_turn
+from app.core.session.process_artifact_store import get_session_catalog
 from app.schemas.session import SessionTurnRecord
 from app.schemas.structured import PendingToolCall, ReportArtifact
 
@@ -159,7 +160,7 @@ async def reporter_node(state: AgentState, runtime: AgentRuntime) -> dict:
 
         if action == "call_tool" and tool_name:
             if tool_name == "read_data_file" and not params.get("path"):
-                catalog = state.get("intermediate_data_catalog") or {}
+                catalog = get_session_catalog(state.get("session_id", ""), runtime.settings)
                 if catalog:
                     params["path"] = next(iter(catalog))
             log.info("触发 report tool 调用", tool_name=tool_name, params=params)

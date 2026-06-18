@@ -15,7 +15,7 @@ if str(_ROOT) not in sys.path:
 
 os.environ["CAPTURE_LLM_IO"] = "1"
 
-QUERY = "统计龙虎榜前10名，画柱状图，需要排序"
+QUERY = "搜索负债榜前五名，用柱状图对比。"
 
 
 async def main() -> None:

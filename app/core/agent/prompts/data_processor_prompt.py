@@ -2,14 +2,9 @@
 
 from __future__ import annotations
 
-import json
-
-from app.core.agent.nodes._helpers import (
-    data_tool_catalog,
-    format_data_tool_history,
-)
+from app.core.agent.nodes._helpers import data_tool_catalog, format_data_tool_history
 from app.core.agent.state import AgentRuntime, AgentState
-from app.core.session.process_artifact_store import format_intermediate_catalog
+from app.core.session.process_artifact_store import format_intermediate_catalog, get_session_catalog
 
 
 def build_data_processor_prompt(state: AgentState, runtime: AgentRuntime) -> str:
@@ -17,46 +12,39 @@ def build_data_processor_prompt(state: AgentState, runtime: AgentRuntime) -> str
     current_step = state.get("process_step", 0)
     max_steps = state.get("max_process_tool_steps", runtime.settings.max_process_tool_steps)
     prior_steps = state.get("data_tool_steps") or []
-    plan_ctx = state.get("plan_context") or {}
-    history_block = ""
-    if isinstance(plan_ctx, dict):
-        hc = plan_ctx.get("history_context") or {}
-        history_block = hc.get("context_text", "") if isinstance(hc, dict) else ""
-    data_desc = state.get("data_process_description", "")
+    dataprocessplan = state.get("dataprocessplan", "")
     history_text = format_data_tool_history(prior_steps)
+    session_id = state.get("session_id", "")
+    catalog_text = format_intermediate_catalog(
+        get_session_catalog(session_id, runtime.settings)
+    )
     tool_catalog = data_tool_catalog(runtime)
-    catalog = state.get("intermediate_data_catalog") or {}
-    catalog_text = format_intermediate_catalog(catalog)
-    last_error = prior_steps[-1].error if prior_steps else ""
-
-    error_rule = ""
-    if last_error:
-        error_rule = (
-            f"上一步工具执行失败：{last_error}。"
-            "优先 action=replan 或 call_tool 修正参数/换工具，不要直接 done。\n"
-        )
+    tool_rules = """第一步，结合处理需求，对相关文件进行预览。
+    第二步，如果需要进行进一步数据处理，则调用工具计算，只计算不绘图。
+    纯筛选数据，则调用data_filter工具。
+    逻辑复杂，执行代码，则调用pandas_execute工具。
+    第三步，如果需要画图，则调用make_chart工具。
+    """
 
     return (
         f"用户问题:{state.get('user_query','')}\n"
-        f"历史上下文:\n{history_block}\n"
-        f"规划上下文:{json.dumps(plan_ctx, ensure_ascii=False)[:600]}\n"
-        f"高层处理目标（可随 replan 更新）:{data_desc}\n"
+        f"dataprocessplan（planner 给出的数据处理计划）:\n{dataprocessplan}\n"
         f"数据文件:{file_path}\n"
-        f"全局中间数据记录（路径:描述）:\n{catalog_text}\n"
-        f"已执行数据处理步骤({current_step}/{max_steps}):\n{history_text}\n"
-        "根据上述观测结果决定下一步。输出 JSON："
-        '{"action":"call_tool|done|replan","tool_name":"preview_read",'
-        '"params":{},"intermediate_data":{},"data_process_description":"",'
-        '"secondary_text_query":"","secondary_data_query":""}\n'
-        f"可用工具:\n{tool_catalog}\n"
-        "规则：\n"
-        f"{error_rule}"
-        "每次输出必须包含完整的 intermediate_data 对象：所有已知中间数据路径及其处理描述。\n"
-        "call_tool 时在 params 中为新生成的中间数据填写 artifact_description。\n"
-        "信息已足够则 action=done；否则 action=call_tool 并指定 tool_name 与 params。\n"
-        "上一步失败或策略需调整时 action=replan，填写更新后的 data_process_description 与下一步 tool_name/params。\n"
-        "需要 SQL 时用 sql_execute（params 含 sql）；复杂变换用 pandas_execute（params 含 code）；"
-        "需要图表时用 make_chart（params 含 chart_type/x_axis/y_axis/title）。"
+        f"已知数据记录（路径:描述）:\n{catalog_text}\n"
+        f"工具调用历史({current_step}/{max_steps}):\n{history_text}\n"
+        "请结合 dataprocessplan 与工具调用历史决定下一步："
+        "若已知数据已满足要求则 action=done；"
+        "若需继续处理则 action=call_tool 并选择合适工具；"
+        "若发现原计划不合理或需调整步骤，则 action=replan 并重新填写 dataprocessplan（分点标号，含取数、处理、计算、保存、是否画图）。\n"
+        "若最新步骤为 error，根据 error 调整工具入参重试；同一工具连续两次 error 则换工具重试。\n"
+        "仅输出 JSON，不要输出任何其他内容："
+        '{"action":"call_tool|done|replan",'
+        '"tool_name":"",'
+        '"params":{},"dataprocessplan":"",'
+        '}\n'
+        f"可调用 data 工具:\n{tool_catalog}\n"
+        "调用工具规则为：\n"
+        f"{tool_rules}\n"
     )
 
 
@@ -65,31 +53,25 @@ def parse_data_processor_response(
     *,
     file_path: str,
     current_step: int,
-    prior_catalog: dict[str, str] | None = None,
 ) -> dict:
     from app.core.agent.nodes._helpers import parse_llm_json
 
     action = "call_tool"
     tool_name = "preview_read"
     params: dict = {"file_path": file_path}
-    data_process_description = ""
-    secondary_text = ""
-    secondary_data = ""
-    intermediate_data = dict(prior_catalog or {})
+    dataprocessplan = ""
+
     try:
         data = parse_llm_json(raw)
         action = data.get("action", action)
         tool_name = data.get("tool_name", tool_name)
         params.update(data.get("params") or {})
         params.setdefault("file_path", file_path)
-        data_process_description = str(data.get("data_process_description", "") or "")
-        secondary_text = str(data.get("secondary_text_query", "") or "")
-        secondary_data = str(data.get("secondary_data_query", "") or "")
-        llm_catalog = data.get("intermediate_data")
-        if isinstance(llm_catalog, dict):
-            for k, v in llm_catalog.items():
-                if k:
-                    intermediate_data[str(k)] = str(v)
+        dataprocessplan = str(
+            data.get("dataprocessplan", "")
+            or data.get("data_process_description", "")
+            or ""
+        )
         if action not in ("call_tool", "done", "replan"):
             action = "done" if current_step > 0 else "call_tool"
     except Exception:
@@ -99,8 +81,5 @@ def parse_data_processor_response(
         "action": action,
         "tool_name": tool_name,
         "params": params,
-        "data_process_description": data_process_description,
-        "secondary_text_query": secondary_text,
-        "secondary_data_query": secondary_data,
-        "intermediate_data": intermediate_data,
+        "dataprocessplan": dataprocessplan,
     }

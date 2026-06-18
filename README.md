@@ -66,7 +66,7 @@
 
 | 图节点                | 代码文件                      | 类型   | Tool 循环           | 主要 State 更新                                                                      |
 | ------------------ | ------------------------- | ---- | ----------------- | -------------------------------------------------------------------------------- |
-| **planner**        | `nodes/planner.py`        | LLM  | ↔ `planning_tool` | `node_flags`、`text_query`、`data_query`、`data_process_description`、`plan_context` |
+| **planner**        | `nodes/planner.py`        | LLM  | ↔ `planning_tool` | `node_flags`、`text_query`、`data_query`、`dataprocessplan`、`plan_context` |
 | **planning_tool**  | `nodes/planning_tool.py`  | Tool | —                 | `plan_steps`                                                                     |
 | **retriever**      | `nodes/retriever.py`      | -    | —                 | `knowledge_chunks`、`data_file_paths`                                             |
 | **data_processor** | `nodes/data_processor.py` | LLM  | ↔ `data_tool`     | `intermediate_data_catalog`、`processed_data`、`chart_artifacts`、可选二次 query |
@@ -97,7 +97,7 @@
 每个 LLM 节点以 ReAct 循环运行：输出 JSON（`action=call_tool|done` 等），经统一 `pending_tool` 触发 Tool 节点，执行后清空 `pending_tool` 并回环，直至 `done` 进入下一图节点。
 
 - **planner / reporter**：纯 ReAct（观测 `*_steps` 历史）
-- **data_processor**：ReAct + 高层 `data_process_description`；支持 `action=replan` 根据工具成功/失败动态调整目标
+- **data_processor**：ReAct + 高层 `dataprocessplan`；支持 `action=replan` 根据工具成功/失败动态调整目标
 
 状态字段：`pending_tool`（`PendingToolCall`）、`plan_done` / `process_done` / `report_done`、`*_steps` 历史列表。
 
@@ -144,8 +144,8 @@
 
 | 节点                 | 功能                                                 | 预期输入                                                 | 预期输出                                                                                   |
 | ------------------ | -------------------------------------------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| **planner**        | 判断新话题 / 追问；调用 plan tool；确定链路开关与 query；描述数据处理需求     | `user_query`、`session_id`、已执行 `plan_steps`           | JSON：`action`、`tool_name`/`enable`_*、`text_query`、`data_query`、`data_process_description` |
-| **data_processor** | 按需求逐步调用 data tool；含 SQL / pandas / 绘图；支持 replan 动态重规划 | `data_process_description`、`data_file_paths`、`intermediate_data_catalog`、tool 历史 | JSON：`action`（含 `replan`）、`tool_name`、`params`、`intermediate_data`（路径→描述，须完整输出） |
+| **planner**        | 判断新话题 / 追问；调用 plan tool；确定链路开关与 query；描述数据处理需求     | `user_query`、`session_id`、已执行 `plan_steps`           | JSON：`action`、`tool_name`/`enable`_*、`text_query`、`data_query`、`dataprocessplan` |
+| **data_processor** | 按需求逐步调用 data tool；含 SQL / pandas / 绘图；支持 replan 动态重规划 | `dataprocessplan`、`data_file_paths`、`intermediate_data_catalog`、tool 历史 | JSON：`action`（含 `replan`）、`tool_name`、`params`、`intermediate_data`（路径→描述，须完整输出） |
 | **reporter**       | 整合检索与处理结果；读取中间数据路径；生成回答 / 报告；写回答摘要      | 检索 chunk、`intermediate_data_catalog`、图表路径、`history_context`             | 回答正文 + `session_history` 摘要；报告模式写 `report.md`（可插入图表）                          |
 
 
@@ -369,7 +369,7 @@ poetry run python scripts/monitor.py
 | `CHROMA_USE_HTTP` / `CHROMA_HTTP_HOST` / `CHROMA_HTTP_PORT` | Chroma Docker HTTP         | `true` / `127.0.0.1` / `8001` |
 | `CACHE_PATH`                                                | 解析缓存 + **会话历史**            | `./data/parsed_cache`         |
 | `REPORT_OUTPUT_PATH`                                        | 报告与图表                      | `./data/reports`              |
-| `MAX_PLAN_TOOL_STEPS`                                       | planner ↔ planning_tool    | `3`                           |
+| `MAX_PLAN_TOOL_STEPS`                                       | planner ↔ planning_tool    | `1`                           |
 | `MAX_PROCESS_TOOL_STEPS`                                    | data_processor ↔ data_tool | `5`                           |
 | `MAX_REPORT_TOOL_STEPS`                                     | reporter ↔ report_tool     | `5`                           |
 | `MAX_RETRIEVAL_ROUNDS`                                      | reporter 二次检索上限            | `3`                           |
@@ -545,7 +545,7 @@ flowchart LR
 | 规划步数已达上限，使用兜底 enables | INFO | planner | `enables`（knowledge/data/process/chart/report） |
 | LLM 规划解析完成 | INFO | planner | `action`、`method`、`enables` |
 | LLM 规划 JSON 解析失败，使用规则兜底 | INFO | planner | `error` |
-| 本次规划链路 | INFO | planner | `enables`、`text_query`、`data_query`、`data_process_description` |
+| 本次规划链路 | INFO | planner | `enables`、`text_query`、`data_query`、`dataprocessplan` |
 | 初始化 session 与步数上限 | INFO | planner | `session_id` |
 | 触发 plan tool 调用 | INFO | planner | `method`、`params` |
 | 生成 query 成功 | INFO | planner | `text_query`、`data_query` |

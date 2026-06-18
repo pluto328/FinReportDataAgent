@@ -9,7 +9,7 @@ from app.core.agent.nodes._debug_runtime import print_node_result, sample_state,
 from app.core.agent.nodes._helpers import append_node, summarize_data_tool_steps
 from app.core.agent.nodes._node_log import node_logger
 from app.core.agent.state import AgentRuntime, AgentState
-from app.core.session.process_artifact_store import merge_intermediate_catalog
+from app.core.session.process_artifact_store import register_session_artifacts
 from app.schemas.structured import ChartArtifact, DataToolStepResult, PendingToolCall, ProcessedDataRef
 
 
@@ -85,9 +85,8 @@ async def data_tool_node(state: AgentState, runtime: AgentRuntime) -> dict:
 
     await emit_tool_end("data", tool_name, ok=not error, error=error)
 
-    merged_catalog = dict(state.get("intermediate_data_catalog") or {})
     if catalog_updates and not error:
-        merged_catalog = merge_intermediate_catalog(session_id, catalog_updates, runtime.settings)
+        register_session_artifacts(session_id, catalog_updates, runtime.settings)
 
     step = DataToolStepResult(
         step=step_no,
@@ -107,7 +106,6 @@ async def data_tool_node(state: AgentState, runtime: AgentRuntime) -> dict:
         "process_result": summary or result,
         "process_done": False,
         "pending_tool": None,
-        "intermediate_data_catalog": merged_catalog,
         **append_node(state, "data_tool"),
     }
     if artifact_ref:

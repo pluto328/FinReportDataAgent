@@ -12,7 +12,7 @@ from app.core.agent.nodes._helpers import (
     summarize_plan_steps,
 )
 from app.core.agent.state import AgentRuntime, AgentState
-from app.core.session.process_artifact_store import format_intermediate_catalog
+from app.core.session.process_artifact_store import format_intermediate_catalog, get_session_catalog
 
 
 def build_reporter_decision_prompt(state: AgentState, runtime: AgentRuntime) -> str:
@@ -21,22 +21,23 @@ def build_reporter_decision_prompt(state: AgentState, runtime: AgentRuntime) -> 
     data_steps = state.get("data_tool_steps") or []
     plan_context = state.get("plan_context") or summarize_plan_steps(state.get("plan_steps") or [])
     process_result = state.get("process_result") or summarize_data_tool_steps(data_steps)
-    catalog = state.get("intermediate_data_catalog") or {}
     report_steps = state.get("report_steps") or []
     report_step = state.get("report_step", 0)
     max_report_steps = state.get("max_report_tool_steps", runtime.settings.max_report_tool_steps)
     report_context = dict(state.get("report_context") or {})
     charts = state.get("chart_artifacts") or []
-    data_desc = state.get("data_process_description", "")
+    data_desc = state.get("dataprocessplan", "")
     history = format_report_tool_history(report_steps)
     tool_catalog = report_tool_catalog(runtime)
-    catalog_text = format_intermediate_catalog(catalog)
+    catalog_text = format_intermediate_catalog(
+        get_session_catalog(state.get("session_id", ""), runtime.settings)
+    )
     chart_paths = [c.path for c in charts if c.path]
 
     return (
         f"问题:{state.get('user_query','')}\n"
         f"规划结果:{json.dumps(plan_context, ensure_ascii=False)[:800]}\n"
-        f"数据处理需求:{data_desc}\n"
+        f"dataprocessplan:{data_desc}\n"
         f"处理流程摘要:{json.dumps(process_result, ensure_ascii=False)[:800]}\n"
         f"中间数据（路径:描述）:\n{catalog_text}\n"
         f"图表路径:{chart_paths}\n"
@@ -59,11 +60,12 @@ def build_answer_prompt(state: AgentState, runtime: AgentRuntime) -> str:
     plan_context = state.get("plan_context") or summarize_plan_steps(state.get("plan_steps") or [])
     history_ctx = extract_history_context(state.get("plan_steps") or [])
     history_block = history_ctx.get("context_text", "") if history_ctx else ""
-    catalog = state.get("intermediate_data_catalog") or {}
     report_context = dict(state.get("report_context") or {})
     charts = state.get("chart_artifacts") or []
     chart_lines = [f"- {c.path}" for c in charts if c.path]
-    catalog_text = format_intermediate_catalog(catalog)
+    catalog_text = format_intermediate_catalog(
+        get_session_catalog(state.get("session_id", ""), runtime.settings)
+    )
     context_parts = [c.chunk.content[:400] for c in chunks[:5]]
     meta_parts = [f"{m.record.file_name}: {m.record.search_text[:200]}" for m in meta[:5]]
     loaded = report_context.get("loaded_content", "")

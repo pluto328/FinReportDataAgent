@@ -23,7 +23,7 @@ def sample_state(**overrides: Any) -> AgentState:
         ),
         "text_query": "销售",
         "data_query": "销售 csv",
-        "data_process_description": "读取销售数据并汇总",
+        "dataprocessplan": "读取销售数据并汇总",
         "plan_steps": [],
         "plan_step": 0,
         "plan_done": False,
@@ -42,7 +42,6 @@ def sample_state(**overrides: Any) -> AgentState:
         "nodes_traversed": [],
         "file_cache": [],
         "chart_artifacts": [],
-        "intermediate_data_catalog": {},
     }
     base.update(overrides)
     return base
@@ -61,7 +60,7 @@ class _StubLLM:
     async def ainvoke(self, prompt: str) -> str:
         return (
             '{"action":"done","text_query":"stub","data_query":"stub",'
-            '"data_process_description":"","enable_knowledge_retrieve":true,'
+            '"dataprocessplan":"","enable_knowledge_retrieve":true,'
             '"enable_data_retrieve":false,"enable_process":false,'
             '"enable_chart":false,"enable_report":false}'
         )

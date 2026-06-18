@@ -10,10 +10,7 @@ from typing import Any
 from app.core.agent.events import ProgressEmitter, reset_emitter, set_emitter
 from app.core.agent.llm_capture import finalize_capture, start_capture
 from app.core.agent.state import AgentState
-from app.core.session.process_artifact_store import (
-    clear_session_workspace,
-    load_intermediate_catalog,
-)
+from app.core.session.process_artifact_store import reset_session_workspace
 from app.config.settings import get_settings
 from app.dependencies import AppContainer
 from app.schemas.query import SearchRequest, SearchResponse
@@ -31,9 +28,6 @@ def _build_initial_state(request: SearchRequest) -> AgentState:
         "data_file_paths": [],
         "processed_data": [],
         "processed_data_refs": [],
-        "intermediate_data_catalog": (
-            load_intermediate_catalog(session_id, get_settings()) if session_id else {}
-        ),
         "chart_artifacts": [],
         "nodes_traversed": [],
         "file_cache": [],
@@ -42,7 +36,7 @@ def _build_initial_state(request: SearchRequest) -> AgentState:
         "plan_done": False,
         "plan_context": {},
         "pending_tool": None,
-        "data_process_description": "",
+        "dataprocessplan": "",
         "data_tool_steps": [],
         "process_step": 0,
         "process_done": False,
@@ -99,7 +93,7 @@ async def run_agent_stream(
     graph = container.agent_graph
     session_id = request.session_id or ""
     if request.new_session and session_id:
-        clear_session_workspace(session_id, container.settings)
+        reset_session_workspace(session_id, container.settings)
     capture_path = start_capture(request.query or "")
     initial = _build_initial_state(request)
     token = set_emitter(emitter)

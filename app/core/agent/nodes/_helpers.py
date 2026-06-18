@@ -176,5 +176,9 @@ def apply_plan_flags(
         enable_chart=bool(data.get("enable_chart", False)),
         enable_report=bool(data.get("enable_report", report_mode)),
     )
-    description = str(data.get("data_process_description", "") or data.get("data_process_flow", ""))
+    description = str(
+        data.get("dataprocessplan", "")
+        or data.get("data_process_description", "")
+        or data.get("data_process_flow", "")
+    )
     return text_q, data_q, flags, description
