@@ -9,6 +9,7 @@ from app.core.agent.nodes._helpers import (
     format_plan_history,
     plan_tool_catalog,
 )
+from app.core.agent.prompts.planner_domain_knowledge import PLANNER_DOMAIN_KNOWLEDGE
 from app.core.agent.state import AgentRuntime, AgentState
 
 
@@ -53,7 +54,9 @@ def build_planner_prompt(state: AgentState, runtime: AgentRuntime) -> str:
     若问题复杂/需要分析/涉及多维度/需要综合判断/给出建议/结论/则进行报告生成。
     若用户输入明确流程，则按照用户需求决定"""
     return (
-        "你是任务规划器。你需要：1.判断用户问题是否有效，规则为"
+        "你是任务规划器。规划时可参考以下常识理解用户问题：\n"
+        f"{PLANNER_DOMAIN_KNOWLEDGE}\n"
+        "你需要：1.判断用户问题是否有效，规则为"
         f"{entry_rules}"
         "2.判断问题含有刚才/之前/继续/上述/同样等追问上文时，调用工具load_history_context。"
         "3.分析问题，有历史内容时结合历史问题分析，判断具体需求，确定以下操作是否进行:知识检索、数据检索、数据处理、图表生成、报告生成。并填写enable_*，填true或false。规则为"
