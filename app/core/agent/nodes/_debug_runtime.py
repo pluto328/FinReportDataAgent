@@ -23,7 +23,7 @@ def sample_state(**overrides: Any) -> AgentState:
         ),
         "text_query": "销售",
         "data_query": "销售 csv",
-        "dataprocessplan": "读取销售数据并汇总",
+        "data_process_plan": "读取销售数据并汇总",
         "plan_steps": [],
         "plan_step": 0,
         "plan_done": False,
@@ -60,7 +60,7 @@ class _StubLLM:
     async def ainvoke(self, prompt: str) -> str:
         return (
             '{"action":"done","text_query":"stub","data_query":"stub",'
-            '"dataprocessplan":"","enable_knowledge_retrieve":true,'
+            '"data_process_plan":"","enable_knowledge_retrieve":true,'
             '"enable_data_retrieve":false,"enable_process":false,'
             '"enable_chart":false,"enable_report":false}'
         )

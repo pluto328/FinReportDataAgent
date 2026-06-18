@@ -23,7 +23,11 @@ from app.core.agent.state import AgentRuntime, AgentState
 async def retrieve_data_node(state: AgentState, runtime: AgentRuntime) -> dict:
     log = node_logger(runtime.settings, "retrieve_data")
     flags = state.get("node_flags")
-    if not flags or not flags.enable_data_retrieve:
+    if state.get("retrieval_from_reporter"):
+        enabled = bool(state.get("supplemental_retrieve_data"))
+    else:
+        enabled = bool(flags and flags.enable_data_retrieve)
+    if not enabled:
         log.start(enabled=False)
         log.info("结构化数据检索未启用，跳过")
         log.end(skipped=True)

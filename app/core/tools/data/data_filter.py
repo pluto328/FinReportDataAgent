@@ -14,7 +14,8 @@ class DataFilterTool(BaseTool):
     name = "data_filter"
     description = (
         "按列条件筛选结构化数据并保存为原格式文件（文件名以 _processed 加原后缀结尾）。"
-        "入参：file_path（绝对路径）、column（列名）、op（eq|contains，默认 eq）、value（比较值）。"
+        "入参：file_path（绝对路径）、column（列名）、op（eq|contains，默认 eq）、value（比较值）、"
+        "artifact_description（必填，产物中文说明，如「龙虎榜前五名数据」）。"
         "返回：path（保存后的绝对路径）。"
     )
 

@@ -14,7 +14,8 @@ class SqlExecuteTool(BaseTool):
     name = "sql_execute"
     description = (
         "对结构化文件执行只读 SELECT（DuckDB），结果保存为 _processed 加原后缀的文件。"
-        "入参：file_path（绝对路径）、sql（SELECT 语句）。"
+        "入参：file_path（绝对路径）、sql（SELECT 语句）、"
+        "artifact_description（必填，产物中文说明，如「某指标汇总表」）。"
         "返回：path（保存后的绝对路径）。"
     )
 

@@ -16,7 +16,8 @@ class PandasExecuteTool(BaseTool):
     name = "pandas_execute"
     description = (
         "对结构化数据执行 pandas 代码，结果 DataFrame 保存为 _processed 加原后缀的文件。"
-        "入参：file_path（绝对路径）、code（Python 代码，使用 df/pd，结果赋给 result 或 df）。"
+        "入参：file_path（绝对路径）、code（Python 代码，使用 df/pd，结果赋给 result 或 df）、"
+        "artifact_description（必填，产物中文说明，如「负债榜前五名数据」）。"
         "返回：path（保存后的绝对路径）；非 DataFrame 结果返回 error。"
     )
 

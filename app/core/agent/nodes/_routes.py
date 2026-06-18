@@ -38,6 +38,8 @@ def route_after_planning_tool(state: AgentState) -> str:
 
 
 def route_after_retriever(state: AgentState) -> str:
+    if state.get("retrieval_from_reporter"):
+        return "reporter"
     flags = state.get("node_flags")
     if flags and flags.enable_process:
         return "data_processor"

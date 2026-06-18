@@ -88,7 +88,7 @@ async def data_processor_node(state: AgentState, runtime: AgentRuntime) -> dict:
     action = parsed["action"]
     tool_name = parsed["tool_name"]
     params = parsed["params"]
-    new_plan = parsed["dataprocessplan"]
+    new_plan = parsed["data_process_plan"]
 
     log.info("LLM 数据处理决策", action=action, tool_name=tool_name if action != "done" else "")
 
@@ -114,7 +114,7 @@ async def data_processor_node(state: AgentState, runtime: AgentRuntime) -> dict:
         **append_node(state, "data_processor"),
     }
     if action == "replan" and new_plan:
-        out_extra["dataprocessplan"] = new_plan
+        out_extra["data_process_plan"] = new_plan
 
     log.info("触发 data tool 调用", tool_name=tool_name, params=params)
     log.end(process_done=False, next_node="data_tool", tool_name=tool_name)

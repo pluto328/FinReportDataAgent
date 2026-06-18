@@ -66,12 +66,12 @@ def build_planner_prompt(state: AgentState, runtime: AgentRuntime) -> str:
         "2.判断问题含有刚才/之前/继续/上述/同样等追问上文时，调用工具load_history_context。"
         "3.分析问题，有历史内容时结合历史问题分析，判断具体需求，确定以下操作是否进行:知识检索、数据检索、数据处理、图表生成、报告生成。并填写enable_*，填true或false。规则为"
         f"{operation_rules}\n"
-        "4.如果需要进行文本检索，提取需求，将检索关键词尽量官方、大众、容易搜索到的词语进行优化、补充和同义替换，并填写text_query。\n"
-        "5.如果需要数据处理，分点标号、列出处理步骤，大致描述为取数据、数据处理、数据计算、保存结果、是否画图。填写dataprocessplan。\n"
-
+        "4.如果需要进行文本检索，提取需求，扩写，尽量检索出更多有效信息，并填写text_query。\n"
+        "5.如果需要数据处理，分点标号、列出处理步骤，大致描述为取数据、数据处理、数据计算、保存结果、是否画图。填写data_process_plan。\n"
+        "6.根据数据处理要求填写data_query,要求使其尽量精准检索到相关数据文件"
         "仅输出 JSON，不要输出任何其他内容：\n"
         "{" + reject_schema +
-        '"text_query":"","data_query":"","dataprocessplan":"",'
+        '"text_query":"","data_query":"","data_process_plan":"",'
         '"enable_knowledge_retrieve":false,"enable_data_retrieve":false,'
         '"enable_process":false,"enable_chart":false,"enable_report":false}\n'
         f"已调用plantool：({plan_step}/{max_steps}):\n{plan_history}\n"
@@ -97,13 +97,13 @@ def parse_planner_response(
     tool_name = "load_history_context"
     params: dict = {}
     text_q, data_q, flags = query, query, NodeEnableFlags()
-    dataprocessplan = ""
+    data_process_plan = ""
     try:
         data = parse_llm_json(raw)
         action = data.get("action", "done")
         tool_name = data.get("tool_name") or data.get("method", tool_name)
         params = dict(data.get("params") or {})
-        text_q, data_q, flags, dataprocessplan = apply_plan_flags(
+        text_q, data_q, flags, data_process_plan = apply_plan_flags(
             data, query, report_mode
         )
         if action not in ("call_tool", "done", "reject"):
@@ -115,7 +115,7 @@ def parse_planner_response(
             "text_query": text_q,
             "data_query": data_q,
             "node_flags": flags,
-            "dataprocessplan": dataprocessplan,
+            "data_process_plan": data_process_plan,
             "reject_reason": str(data.get("reject_reason", "unclear")),
         }
     except Exception:
@@ -123,7 +123,7 @@ def parse_planner_response(
         if any(k in lowered for k in ("csv", "xlsx", "table", "数据", "统计", "图表")):
             flags.enable_data_retrieve = True
             flags.enable_process = True
-            dataprocessplan = "读取并汇总结构化数据"
+            data_process_plan = "读取并汇总结构化数据"
         if not history_loaded and plan_steps == []:
             action = "call_tool"
             tool_name = "load_history_context"
@@ -135,6 +135,6 @@ def parse_planner_response(
         "text_query": text_q,
         "data_query": data_q,
         "node_flags": flags,
-        "dataprocessplan": dataprocessplan,
+        "data_process_plan": data_process_plan,
         "reject_reason": "unclear",
     }

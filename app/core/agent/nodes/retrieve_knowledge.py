@@ -23,7 +23,11 @@ from app.core.agent.state import AgentRuntime, AgentState
 async def retrieve_knowledge_node(state: AgentState, runtime: AgentRuntime) -> dict:
     log = node_logger(runtime.settings, "retrieve_knowledge")
     flags = state.get("node_flags")
-    if not flags or not flags.enable_knowledge_retrieve:
+    if state.get("retrieval_from_reporter"):
+        enabled = bool(state.get("supplemental_retrieve_knowledge"))
+    else:
+        enabled = bool(flags and flags.enable_knowledge_retrieve)
+    if not enabled:
         log.start(enabled=False)
         log.info("知识检索未启用，跳过")
         log.end(skipped=True)

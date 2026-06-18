@@ -36,7 +36,7 @@ def _build_initial_state(request: SearchRequest) -> AgentState:
         "plan_done": False,
         "plan_context": {},
         "pending_tool": None,
-        "dataprocessplan": "",
+        "data_process_plan": "",
         "data_tool_steps": [],
         "process_step": 0,
         "process_done": False,

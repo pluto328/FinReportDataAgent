@@ -29,7 +29,13 @@ async def retriever_node(state: AgentState, runtime: AgentRuntime) -> dict:
         retrieve_knowledge_node(state, runtime),
         retrieve_data_node(state, runtime),
     )
-    merged: dict = {"nodes_traversed": ["retriever"], "need_more_retrieval": False}
+    merged: dict = {
+        "nodes_traversed": ["retriever"],
+        "need_more_retrieval": False,
+        "retrieval_from_reporter": False,
+        "supplemental_retrieve_knowledge": False,
+        "supplemental_retrieve_data": False,
+    }
     for part in (k_res, d_res):
         for key, val in part.items():
             if key == "nodes_traversed":

@@ -35,7 +35,7 @@ class AgentState(TypedDict, total=False):
     chat_history: list[ChatMessage]
     text_query: str
     data_query: str
-    dataprocessplan: str
+    data_process_plan: str
     node_flags: NodeEnableFlags
     report_mode: bool
     session_id: str
@@ -46,6 +46,9 @@ class AgentState(TypedDict, total=False):
     retrieval_round: int
     max_retrieval_rounds: int
     need_more_retrieval: bool
+    retrieval_from_reporter: bool
+    supplemental_retrieve_knowledge: bool
+    supplemental_retrieve_data: bool
 
     pending_tool: PendingToolCall | None
     plan_done: bool

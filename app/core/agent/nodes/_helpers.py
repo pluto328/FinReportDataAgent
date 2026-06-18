@@ -177,7 +177,8 @@ def apply_plan_flags(
         enable_report=bool(data.get("enable_report", report_mode)),
     )
     description = str(
-        data.get("dataprocessplan", "")
+        data.get("data_process_plan", "")
+        or data.get("dataprocessplan", "")
         or data.get("data_process_description", "")
         or data.get("data_process_flow", "")
     )

@@ -16,7 +16,8 @@ class MakeChartTool(BaseTool):
     name = "make_chart"
     description = (
         "根据结构化数据绘制表格/折线图/柱状图，保存为 _processed.png 或 _processed.csv。"
-        "入参：file_path（绝对路径）、chart_type（table|line|bar）、x_axis、y_axis、title。"
+        "入参：file_path（绝对路径）、chart_type（table|line|bar）、x_axis、y_axis、title、"
+        "artifact_description（必填，图表中文说明，如「负债榜前五名柱状图」）。"
         "返回：path（保存后的绝对路径）。"
     )
 
