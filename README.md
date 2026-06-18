@@ -64,28 +64,28 @@
 ### 节点职责与 State
 
 
-| 图节点                | 代码文件                      | 类型   | Tool 循环           | 主要 State 更新                                                                      |
-| ------------------ | ------------------------- | ---- | ----------------- | -------------------------------------------------------------------------------- |
+| 图节点                | 代码文件                      | 类型   | Tool 循环           | 主要 State 更新                                                               |
+| ------------------ | ------------------------- | ---- | ----------------- | ------------------------------------------------------------------------- |
 | **planner**        | `nodes/planner.py`        | LLM  | ↔ `planning_tool` | `node_flags`、`text_query`、`data_query`、`data_process_plan`、`plan_context` |
-| **planning_tool**  | `nodes/planning_tool.py`  | Tool | —                 | `plan_steps`                                                                     |
-| **retriever**      | `nodes/retriever.py`      | -    | —                 | `knowledge_chunks`、`data_file_paths`                                             |
-| **data_processor** | `nodes/data_processor.py` | LLM  | ↔ `data_tool`     | `data_process_plan`、可选 replan |
-| **data_tool**      | `nodes/data_tool.py`      | Tool | —                 | 写 session catalog、`chart_artifacts`、产物 `path` |
-| **reporter**       | `nodes/reporter.py`       | LLM  | ↔ `report_tool`   | `report_artifact`、`final_answer`、会话摘要持久化                                         |
-| **report_tool**    | `nodes/report_tool.py`    | Tool | —                 | `report_steps`、`report_context`                                                  |
+| **planning_tool**  | `nodes/planning_tool.py`  | Tool | —                 | `plan_steps`                                                              |
+| **retriever**      | `nodes/retriever.py`      | -    | —                 | `knowledge_chunks`、`data_file_paths`                                      |
+| **data_processor** | `nodes/data_processor.py` | LLM  | ↔ `data_tool`     | `data_process_plan`、可选 replan                                             |
+| **data_tool**      | `nodes/data_tool.py`      | Tool | —                 | 写 session catalog、`chart_artifacts`、产物 `path`                             |
+| **reporter**       | `nodes/reporter.py`       | LLM  | ↔ `report_tool`   | `report_artifact`、`final_answer`、会话摘要持久化                                  |
+| **report_tool**    | `nodes/report_tool.py`    | Tool | —                 | `report_steps`、`report_context`                                           |
 
 
 ### 会话与多轮追问
 
 
-| 机制        | 说明                                                                                                                             |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| **摘要落盘**  | `reporter` 单次 LLM JSON 的 `summary` 字段，追加到 `{CACHE_PATH}/{session_id}/session_history.json` |
-| **追问识别**  | `planner` 判断问题是否需结合前文；需要则调用 `load_history_context`，再结合历史填写 query |
-| **历史加载**  | 问题需结合前文时 `planner` 调用 `load_history_context`（无入参），返回全部历史 Q&A 摘要写入 `plan_context.history_context` |
+| 机制        | 说明                                                                                                               |
+| --------- | ---------------------------------------------------------------------------------------------------------------- |
+| **摘要落盘**  | `reporter` 单次 LLM JSON 的 `summary` 字段，追加到 `{CACHE_PATH}/{session_id}/session_history.json`                       |
+| **追问识别**  | `planner` 判断问题是否需结合前文；需要则调用 `load_history_context`，再结合历史填写 query                                                 |
+| **历史加载**  | 问题需结合前文时 `planner` 调用 `load_history_context`（无入参），返回全部历史 Q&A 摘要写入 `plan_context.history_context`                 |
 | **报告生成**  | `reporter` 单次 LLM 输出统一 JSON：`action` + `answer`/`report`/`summary`；报告模式 `final_answer` 固定「详见报告」，正文写入 `report.md` |
-| **客户端历史** | API 可选传 `chat_history`；无磁盘记录时 tool 回退到最近一轮 client 消息                                                                           |
-| **新会话**   | API 传 `new_session: true`（前端「新会话」首条消息自动带上）时清空该 `session_id` 的 processed 目录与 `intermediate_data_catalog.json`              |
+| **客户端历史** | API 可选传 `chat_history`；无磁盘记录时 tool 回退到最近一轮 client 消息                                                             |
+| **新会话**   | API 传 `new_session: true`（前端「新会话」首条消息自动带上）时清空该 `session_id` 的 processed 目录与 `intermediate_data_catalog.json`     |
 
 
 同一 `session_id` 的多轮请求会自动串联上下文，无需客户端自行拼摘要。
@@ -104,21 +104,25 @@
 
 ### planner → `plan_registry`（`app/core/tools/plan/`）
 
-| Tool | 功能 | 入参 | 返回 |
-| ---- | ---- | ---- | ---- |
+
+| Tool                   | 功能               | 入参                     | 返回                                                |
+| ---------------------- | ---------------- | ---------------------- | ------------------------------------------------- |
 | `load_history_context` | 加载本会话全部历史问题与回答摘要 | 无（节点自动注入 `session_id`） | `turn_count`、`history`（列表）、`context_text`（全部历史拼接） |
+
 
 > `planning_tool` 节点会自动注入 `session_id`、`current_query`、`settings`、`chat_history`。
 
 ### data_processor → `data_registry`（`app/core/tools/data/`）
 
-| Tool | 功能 | 入参 | 返回 |
-| ---- | ---- | ---- | ---- |
-| `preview_read` | 预览读取结构化文件（不落盘） | `file_path`（绝对路径） | `preview`（前 20 行记录列表） |
-| `data_filter` | 按列条件筛选，全量读取后保存为原格式 | `file_path`、`column`、`op`（`eq`\|`contains`）、`value`、**`artifact_description`**（必填，如「龙虎榜前五名数据」） | `path` |
-| `sql_execute` | DuckDB 只读 `SELECT`，结果落盘 | `file_path`、`sql`、**`artifact_description`** | `path`；失败时 `error` |
-| `pandas_execute` | 执行 pandas 代码（预置 `df`/`pd`，结果赋给 `result` 或 `df`） | `file_path`、`code`、**`artifact_description`** | `path`；非 DataFrame 或异常时 `error` |
-| `make_chart` | 绘制表格 / 折线 / 柱状图 | `file_path`、`chart_type`（`table`\|`line`\|`bar`）、`x_axis`、`y_axis`、`title`、**`artifact_description`** | `path` |
+
+| Tool             | 功能                                              | 入参                                                                                                  | 返回                              |
+| ---------------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------- |
+| `preview_read`   | 预览读取结构化文件（不落盘）                                  | `file_path`（绝对路径）                                                                                   | `preview`（前 20 行记录列表）           |
+| `data_filter`    | 按列条件筛选，全量读取后保存为原格式                              | `file_path`、`column`、`op`（`eq`|`contains`）、`value`、`**artifact_description`**（必填，如「龙虎榜前五名数据」）       | `path`                          |
+| `sql_execute`    | DuckDB 只读 `SELECT`，结果落盘                         | `file_path`、`sql`、`**artifact_description**`                                                        | `path`；失败时 `error`              |
+| `pandas_execute` | 执行 pandas 代码（预置 `df`/`pd`，结果赋给 `result` 或 `df`） | `file_path`、`code`、`**artifact_description**`                                                       | `path`；非 DataFrame 或异常时 `error` |
+| `make_chart`     | 绘制表格 / 折线 / 柱状图                                 | `file_path`、`chart_type`（`table`|`line`|`bar`）、`x_axis`、`y_axis`、`title`、`**artifact_description**` | `path`                          |
+
 
 **中间数据 catalog 规则**
 
@@ -134,9 +138,11 @@
 
 ### reporter → `report_registry`（`app/core/tools/report/`）
 
-| Tool | 功能 | 入参 | 返回 |
-| ---- | ---- | ---- | ---- |
+
+| Tool             | 功能            | 入参           | 返回                                        |
+| ---------------- | ------------- | ------------ | ----------------------------------------- |
 | `read_data_file` | 读取中间数据或产物文件全文 | `path`（绝对路径） | `content`、`path`、`char_count`；失败时 `error` |
+
 
 **reporter 统一 JSON 输出**（单次 prompt，决策与成稿合一）：
 
@@ -153,12 +159,14 @@
 }
 ```
 
-| `action` | 行为 | `answer` / `report` / `summary` |
-| -------- | ---- | ------------------------------- |
-| `call_tool` | 调用 `read_data_file` 等 | 均为空 |
-| `retrieve_text` | 仅补充知识检索，回 retriever → reporter | 均为空 |
-| `retrieve_data` | 仅补充结构化元数据检索 | 均为空 |
-| `done` | 结束循环 | 非报告：`answer` + `summary`；报告模式：`answer` 固定「详见报告」+ `report` + `summary` |
+
+| `action`        | 行为                             | `answer` / `report` / `summary`                                       |
+| --------------- | ------------------------------ | --------------------------------------------------------------------- |
+| `call_tool`     | 调用 `read_data_file` 等          | 均为空                                                                   |
+| `retrieve_text` | 仅补充知识检索，回 retriever → reporter | 均为空                                                                   |
+| `retrieve_data` | 仅补充结构化元数据检索                    | 均为空                                                                   |
+| `done`          | 结束循环                           | 非报告：`answer` + `summary`；报告模式：`answer` 固定「详见报告」+ `report` + `summary` |
+
 
 补充检索须避免重复 query 与已命中来源；由 reporter 设置 `retrieval_from_reporter`，检索后跳过 `data_processor` 直接回 reporter。
 
@@ -169,11 +177,11 @@
 ## LLM 结点与提示词工程
 
 
-| 节点                 | 功能                                                 | 预期输入                                                 | 预期输出                                                                                   |
-| ------------------ | -------------------------------------------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| **planner**        | 判断新话题 / 追问；调用 plan tool；确定链路开关与 query；描述数据处理需求     | `user_query`、`session_id`、已执行 `plan_steps`           | JSON：`action`、`tool_name`/`enable`_*、`text_query`、`data_query`、`data_process_plan` |
-| **data_processor** | 按需求逐步调用 data tool；含 SQL / pandas / 绘图；支持 replan | `data_process_plan`、session catalog、tool 历史 | JSON：`action`（含 `replan`）、`tool_name`、`params`（落盘工具必填 `artifact_description`） |
-| **reporter**       | 整合上下文；可选读文件 / 补充检索；一次输出答案或报告 | 问题、`data_process_plan`、catalog、文档片段、tool 历史 | 统一 JSON（见上）；报告写 `report.md` |
+| 节点                 | 功能                                              | 预期输入                                        | 预期输出                                                                               |
+| ------------------ | ----------------------------------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------- |
+| **planner**        | 判断新话题 / 追问；调用 plan tool；确定链路开关与 query；描述数据处理需求  | `user_query`、`session_id`、已执行 `plan_steps`  | JSON：`action`、`tool_name`/`enable`_*、`text_query`、`data_query`、`data_process_plan` |
+| **data_processor** | 按需求逐步调用 data tool；含 SQL / pandas / 绘图；支持 replan | `data_process_plan`、session catalog、tool 历史 | JSON：`action`（含 `replan`）、`tool_name`、`params`（落盘工具必填 `artifact_description`）      |
+| **reporter**       | 整合上下文；可选读文件 / 补充检索；一次输出答案或报告                    | 问题、`data_process_plan`、catalog、文档片段、tool 历史 | 统一 JSON（见上）；报告写 `report.md`                                                        |
 
 
 ---
@@ -181,18 +189,18 @@
 ## 功能概览
 
 
-| 模块            | 能力                                                                        |
-| ------------- | ------------------------------------------------------------------------- |
-| **双轨入库**      | 文本 → ES + Chroma chunk；结构化 → 仅元数据索引；MD5 增量 + 软删除                          |
-| **文本混合检索**    | ES / BM25 / Dense 并行 + Reranker；`ENABLE_ES/BM25/DENSE` 消融                 |
-| **元数据检索**     | MetaKeyword + MetaDense；返回含 `file_path` 的 `ScoredMetaRecord`              |
-| **Agent 流水线** | 7 图节点：3 LLM ReAct + 3 Tool 环 + 1 检索；`pending_tool` 统一调度 |
-| **流式 SSE**   | `POST /search/stream`、`POST /report/stream` 推送思考、工具步骤与逐字回答 |
-| **结构化处理**     | `data_processor` ↔ `data_tool`：读表 / 过滤 / 聚合 / SQL / pandas / `make_chart` |
-| **报告与图表**     | `POST /report/stream` 或 `report_mode`；图表由 data tool 生成，reporter 插入 Markdown           |
-| **多轮会话**      | 服务端 `session_history.json` + `load_history_context` 追问加载                  |
-| **评测体系**      | `gen_testset.py`、`rag_metric_eval.py`                                     |
-| **实时监听**      | `monitor.py` 监听 `raw_docs` + `raw_structured`                             |
+| 模块            | 能力                                                                          |
+| ------------- | --------------------------------------------------------------------------- |
+| **双轨入库**      | 文本 → ES + Chroma chunk；结构化 → 仅元数据索引；MD5 增量 + 软删除                            |
+| **文本混合检索**    | ES / BM25 / Dense 并行 + Reranker；`ENABLE_ES/BM25/DENSE` 消融                   |
+| **元数据检索**     | MetaKeyword + MetaDense；返回含 `file_path` 的 `ScoredMetaRecord`                |
+| **Agent 流水线** | 7 图节点：3 LLM ReAct + 3 Tool 环 + 1 检索；`pending_tool` 统一调度                     |
+| **流式 SSE**    | `POST /search/stream`、`POST /report/stream` 推送思考、工具步骤与逐字回答                  |
+| **结构化处理**     | `data_processor` ↔ `data_tool`：读表 / 过滤 / 聚合 / SQL / pandas / `make_chart`   |
+| **报告与图表**     | `POST /report/stream` 或 `report_mode`；图表由 data tool 生成，reporter 插入 Markdown |
+| **多轮会话**      | 服务端 `session_history.json` + `load_history_context` 追问加载                    |
+| **评测体系**      | `gen_testset.py`、`rag_metric_eval.py`                                       |
+| **实时监听**      | `monitor.py` 监听 `raw_docs` + `raw_structured`                               |
 
 
 ---
@@ -389,20 +397,20 @@ poetry run python scripts/monitor.py
 ## 主要环境变量
 
 
-| 变量                                                          | 说明                         | 默认                            |
-| ----------------------------------------------------------- | -------------------------- | ----------------------------- |
-| `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL`                | LLM 配置                     | —                             |
-| `ES_HOST` / `ES_USER` / `ES_PASSWORD`                       | Elasticsearch              | 对齐 compose                    |
-| `CHROMA_USE_HTTP` / `CHROMA_HTTP_HOST` / `CHROMA_HTTP_PORT` | Chroma Docker HTTP         | `true` / `127.0.0.1` / `8001` |
-| `CACHE_PATH`                                                | 解析缓存 + **会话历史**            | `./data/parsed_cache`         |
-| `REPORT_OUTPUT_PATH`                                        | 报告与图表                      | `./data/reports`              |
-| `MAX_PLAN_TOOL_STEPS`                                       | planner ↔ planning_tool    | `1`                           |
-| `MAX_PROCESS_TOOL_STEPS`                                    | data_processor ↔ data_tool | `5`                           |
-| `MAX_REPORT_TOOL_STEPS`                                     | reporter ↔ report_tool     | `5`                           |
-| `MAX_RETRIEVAL_ROUNDS`                                      | reporter 二次检索上限            | `3`                           |
-| `CONTEXT_SIZE_THRESHOLD_CHARS`                              | read_data_file 默认截断        | `12000`                       |
-| `ENABLE_ES` / `ENABLE_BM25` / `ENABLE_DENSE`                | 文本检索消融                     | 均为 `true`                     |
-| `ENABLE_AGENT_NODE_LOG` / `AGENT_NODE_LOG_LEVEL`            | Agent 节点全流程日志（START/END/关键步骤） | `true` / `INFO`                 |
+| 变量                                                          | 说明                            | 默认                            |
+| ----------------------------------------------------------- | ----------------------------- | ----------------------------- |
+| `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL`                | LLM 配置                        | —                             |
+| `ES_HOST` / `ES_USER` / `ES_PASSWORD`                       | Elasticsearch                 | 对齐 compose                    |
+| `CHROMA_USE_HTTP` / `CHROMA_HTTP_HOST` / `CHROMA_HTTP_PORT` | Chroma Docker HTTP            | `true` / `127.0.0.1` / `8001` |
+| `CACHE_PATH`                                                | 解析缓存 + **会话历史**               | `./data/parsed_cache`         |
+| `REPORT_OUTPUT_PATH`                                        | 报告与图表                         | `./data/reports`              |
+| `MAX_PLAN_TOOL_STEPS`                                       | planner ↔ planning_tool       | `1`                           |
+| `MAX_PROCESS_TOOL_STEPS`                                    | data_processor ↔ data_tool    | `5`                           |
+| `MAX_REPORT_TOOL_STEPS`                                     | reporter ↔ report_tool        | `5`                           |
+| `MAX_RETRIEVAL_ROUNDS`                                      | reporter 二次检索上限               | `3`                           |
+| `CONTEXT_SIZE_THRESHOLD_CHARS`                              | read_data_file 默认截断           | `12000`                       |
+| `ENABLE_ES` / `ENABLE_BM25` / `ENABLE_DENSE`                | 文本检索消融                        | 均为 `true`                     |
+| `ENABLE_AGENT_NODE_LOG` / `AGENT_NODE_LOG_LEVEL`            | Agent 节点全流程日志（START/END/关键步骤） | `true` / `INFO`               |
 
 
 完整列表见 `.env.example`。
@@ -414,23 +422,25 @@ poetry run python scripts/monitor.py
 ## API 概览
 
 
-| 路由  | 路径                                                 | 说明                                                |
-| --- | -------------------------------------------------- | ------------------------------------------------- |
-| 文档  | `POST /documents/upload`、`POST /documents/sync`    | 上传与全量同步                                           |
-| 问答  | `POST /search/stream`（SSE）                         | `query`、`session_id`、`chat_history`、`report_mode` |
-| 报告  | `POST /report/stream`（SSE）、`GET /report/{session_id}/download` | 流式生成与 Markdown 下载 |
+| 路由  | 路径                                                             | 说明                                                |
+| --- | -------------------------------------------------------------- | ------------------------------------------------- |
+| 文档  | `POST /documents/upload`、`POST /documents/sync`                | 上传与全量同步                                           |
+| 问答  | `POST /search/stream`（SSE）                                     | `query`、`session_id`、`chat_history`、`report_mode` |
+| 报告  | `POST /report/stream`（SSE）、`GET /report/{session_id}/download` | 流式生成与 Markdown 下载                                 |
 
 
 ### SSE 事件类型
 
-| type | 说明 |
-|------|------|
-| `node_start` | 进入图节点（如 retriever） |
-| `thinking_start` / `thinking_delta` / `thinking_end` | 三阶段 LLM 决策流式输出 |
-| `tool_start` / `tool_end` | 工具调用中 / 完成 |
-| `answer_start` / `answer_delta` / `answer_end` | 最终回答逐字流 |
-| `done` | 含 `answer`、`session_id`、`report_url`、检索结果等 |
-| `error` | 异常信息 |
+
+| type                                                 | 说明                                         |
+| ---------------------------------------------------- | ------------------------------------------ |
+| `node_start`                                         | 进入图节点（如 retriever）                         |
+| `thinking_start` / `thinking_delta` / `thinking_end` | 三阶段 LLM 决策流式输出                             |
+| `tool_start` / `tool_end`                            | 工具调用中 / 完成                                 |
+| `answer_start` / `answer_delta` / `answer_end`       | 最终回答逐字流                                    |
+| `done`                                               | 含 `answer`、`session_id`、`report_url`、检索结果等 |
+| `error`                                              | 异常信息                                       |
+
 
 前端见 `frontend/index.html`（思考区可折叠、工具步骤、回答流式展示）。
 
@@ -454,22 +464,24 @@ poetry run python scripts/monitor.py
 
 均在**仓库根目录**执行。依赖 `.env` 与 `poetry install` 已完成。
 
-| 脚本 | 用途分类 | 测试/使用目的 |
-|------|----------|----------------|
-| `scripts/monitor.py` | 入库运维 | 监听 `raw_docs` / `raw_structured` 变更并增量同步到 ES + Chroma |
-| `scripts/run_query_capture_llm.py` | Agent E2E | 不启 FastAPI，跑完整 Agent 并落盘全部 LLM prompt/输出 |
-| `scripts/prompt_debug/run_planner.py` | Prompt 单测 | 隔离调试 planner 提示词与 LLM 响应 |
-| `scripts/prompt_debug/run_data_processor.py` | Prompt 单测 | 隔离调试 data_processor 提示词 |
-| `scripts/prompt_debug/run_reporter.py` | Prompt 单测 | 隔离调试 reporter 统一 prompt |
-| `scripts/score_chunk_query.py` | 检索调试 | 计算 query 与 chunk 的余弦相似度（可选 rerank） |
-| `scripts/check_es_health.py` | 基础设施 | 探测 Elasticsearch 连通与鉴权 |
-| `scripts/check_chroma_import.py` | 基础设施 | 验证 Chroma / onnxruntime 能否正常 import |
-| `scripts/check_hf_hub.py` | 基础设施 | 验证 HF 镜像可达性与 bge 模型元数据 |
-| `scripts/check_docker_registry.py` | 基础设施 | 探测 Docker Hub / elastic 镜像仓库 TCP 连通 |
-| `scripts/reset_chroma_chunks.py` | Chroma 维护 | 重建 `rag_collection` 并 smoke upsert（upsert 卡死/损坏恢复） |
-| `scripts/test_chroma_upsert.py` | Chroma 维护 | 批量 upsert 压测/诊断（建议停 uvicorn 后跑） |
-| `eval/gen_testset.py` | RAG 评测 | 从 `raw_docs` 用 LLM 自动生成问答评测集 |
-| `eval/rag_metric_eval.py` | RAG 评测 | 对评测集跑 ES/BM25/Dense 消融并算 Recall@K |
+
+| 脚本                                           | 用途分类      | 测试/使用目的                                               |
+| -------------------------------------------- | --------- | ----------------------------------------------------- |
+| `scripts/monitor.py`                         | 入库运维      | 监听 `raw_docs` / `raw_structured` 变更并增量同步到 ES + Chroma |
+| `scripts/run_query_capture_llm.py`           | Agent E2E | 不启 FastAPI，跑完整 Agent 并落盘全部 LLM prompt/输出              |
+| `scripts/prompt_debug/run_planner.py`        | Prompt 单测 | 隔离调试 planner 提示词与 LLM 响应                              |
+| `scripts/prompt_debug/run_data_processor.py` | Prompt 单测 | 隔离调试 data_processor 提示词                               |
+| `scripts/prompt_debug/run_reporter.py`       | Prompt 单测 | 隔离调试 reporter 统一 prompt                               |
+| `scripts/score_chunk_query.py`               | 检索调试      | 计算 query 与 chunk 的余弦相似度（可选 rerank）                    |
+| `scripts/check_es_health.py`                 | 基础设施      | 探测 Elasticsearch 连通与鉴权                                |
+| `scripts/check_chroma_import.py`             | 基础设施      | 验证 Chroma / onnxruntime 能否正常 import                   |
+| `scripts/check_hf_hub.py`                    | 基础设施      | 验证 HF 镜像可达性与 bge 模型元数据                                |
+| `scripts/check_docker_registry.py`           | 基础设施      | 探测 Docker Hub / elastic 镜像仓库 TCP 连通                   |
+| `scripts/reset_chroma_chunks.py`             | Chroma 维护 | 重建 `rag_collection` 并 smoke upsert（upsert 卡死/损坏恢复）    |
+| `scripts/test_chroma_upsert.py`              | Chroma 维护 | 批量 upsert 压测/诊断（建议停 uvicorn 后跑）                       |
+| `eval/gen_testset.py`                        | RAG 评测    | 从 `raw_docs` 用 LLM 自动生成问答评测集                          |
+| `eval/rag_metric_eval.py`                    | RAG 评测    | 对评测集跑 ES/BM25/Dense 消融并算 Recall@K                     |
+
 
 ---
 
@@ -509,11 +521,13 @@ poetry run python scripts/run_query_capture_llm.py
 
 **公共参数**（三个 run_*.py 均支持）：
 
-| 参数 | 说明 |
-|------|------|
-| `--query` | 覆盖 state 中的 `user_query` |
+
+| 参数        | 说明                            |
+| --------- | ----------------------------- |
+| `--query` | 覆盖 state 中的 `user_query`      |
 | `--state` | JSON state 文件路径（见 `samples/`） |
-| `--out` | 输出 markdown 路径（默认带时间戳文件名） |
+| `--out`   | 输出 markdown 路径（默认带时间戳文件名）     |
+
 
 **样例 state**：`scripts/prompt_debug/samples/planner_default.json`、`data_processor_default.json`、`reporter_default.json`
 
@@ -543,11 +557,13 @@ poetry run python -m scripts.prompt_debug.run_reporter --state scripts/prompt_de
 poetry run python -m scripts.prompt_debug.run_reporter --force-done
 ```
 
-| 参数 | 说明 |
-|------|------|
-| `--query` | 覆盖 `user_query` |
-| `--state` | JSON state 文件 |
+
+| 参数             | 说明                                     |
+| -------------- | -------------------------------------- |
+| `--query`      | 覆盖 `user_query`                        |
+| `--state`      | JSON state 文件                          |
 | `--force-done` | 模拟已达最大 report tool 步数，强制 `action=done` |
+
 
 **测试目的**：验证 session catalog、文档片段、补充检索（`retrieve_text`/`retrieve_data`）、`read_data_file` 与最终 `answer`/`report`/`summary` JSON。
 
@@ -564,13 +580,15 @@ poetry run python scripts/score_chunk_query.py --query "..." --chunks-json chunk
 poetry run python scripts/score_chunk_query.py --query "..." --chunk "..." --out scores.json
 ```
 
-| 参数 | 说明 |
-|------|------|
-| `--query` | 检索问句 |
-| `--chunk` / `--chunk-file` | 单条 chunk 文本 |
-| `--chunks-json` | 批量：`[{"text":"..."}, ...]` |
-| `--rerank` | 额外计算 cross-encoder rerank 分 |
-| `--out` | 可选 JSON 输出路径 |
+
+| 参数                         | 说明                          |
+| -------------------------- | --------------------------- |
+| `--query`                  | 检索问句                        |
+| `--chunk` / `--chunk-file` | 单条 chunk 文本                 |
+| `--chunks-json`            | 批量：`[{"text":"..."}, ...]`  |
+| `--rerank`                 | 额外计算 cross-encoder rerank 分 |
+| `--out`                    | 可选 JSON 输出路径                |
+
 
 ---
 
@@ -585,12 +603,14 @@ poetry run python scripts/check_hf_hub.py         # HF 镜像 TCP + 模型 HEAD 
 poetry run python scripts/check_docker_registry.py # Docker Hub / docker.elastic.co 443
 ```
 
-| 脚本 | 测试目的 |
-|------|----------|
-| `check_es_health.py` | 确认 ES 地址、用户名密码、集群是否可达 |
-| `check_chroma_import.py` | 排除 Chroma 因 onnx 依赖导致的 import 失败 |
-| `check_hf_hub.py` | 确认 `HF_ENDPOINT` 镜像与 bge-m3 模型元数据可拉取 |
-| `check_docker_registry.py` | 确认本机能否拉取 compose 所需 Docker 镜像 |
+
+| 脚本                         | 测试目的                                 |
+| -------------------------- | ------------------------------------ |
+| `check_es_health.py`       | 确认 ES 地址、用户名密码、集群是否可达                |
+| `check_chroma_import.py`   | 排除 Chroma 因 onnx 依赖导致的 import 失败     |
+| `check_hf_hub.py`          | 确认 `HF_ENDPOINT` 镜像与 bge-m3 模型元数据可拉取 |
+| `check_docker_registry.py` | 确认本机能否拉取 compose 所需 Docker 镜像        |
+
 
 ---
 
@@ -624,10 +644,12 @@ poetry run python eval/gen_testset.py
 poetry run python eval/rag_metric_eval.py
 ```
 
-| 脚本 | 输入 | 输出 |
-|------|------|------|
-| `gen_testset.py` | `data/raw_docs` 文本文件 | `eval/test_result/testset_{timestamp}.json` |
-| `rag_metric_eval.py` | 上述最新 testset | `eval/test_result/metrics_{timestamp}.json` |
+
+| 脚本                   | 输入                   | 输出                                          |
+| -------------------- | -------------------- | ------------------------------------------- |
+| `gen_testset.py`     | `data/raw_docs` 文本文件 | `eval/test_result/testset_{timestamp}.json` |
+| `rag_metric_eval.py` | 上述最新 testset         | `eval/test_result/metrics_{timestamp}.json` |
+
 
 `rag_metric_eval.py` 内置 scheme：`full_hybrid`、`es_only`、`bm25_only`、`dense_only`（由 `ENABLE_ES` / `ENABLE_BM25` / `ENABLE_DENSE` 组合切换）。
 
@@ -722,68 +744,71 @@ flowchart LR
 
 `[agent][{节点名}] {说明} key=value ...`
 
-| 日志说明 | 阶段 | 节点 | 附带字段（示例） |
-| --- | --- | --- | --- |
-| 进入规划节点 | START | **planner** | `session_id`、`query`、`plan_step`、`max_steps`、`history_loaded` |
-| 正在规划链路开关与 query | INFO | planner | `user_query` |
-| 规划步数已达上限，使用兜底 enables | INFO | planner | `enables`（knowledge/data/process/chart/report） |
-| LLM 规划解析完成 | INFO | planner | `action`、`method`、`enables` |
-| LLM 规划 JSON 解析失败，使用规则兜底 | INFO | planner | `error` |
-| 本次规划链路 | INFO | planner | `enables`、`text_query`、`data_query`、`data_process_plan` |
-| 初始化 session 与步数上限 | INFO | planner | `session_id` |
-| 触发 plan tool 调用 | INFO | planner | `method`、`params` |
-| 生成 query 成功 | INFO | planner | `text_query`、`data_query` |
-| 规划结束 | END | planner | `plan_done`、`text_query`、`data_query`、`enables`；转 tool 时含 `next_node=planning_tool`、`method` |
-| 进入规划工具节点 | START | **planning_tool** | `method`、`step`、`params`；无任务时为 `plan_action=skip` |
-| 无待执行 plan tool，跳过 | INFO | planning_tool | — |
-| 触发 plan tool 调用 | INFO | planning_tool | `method` |
-| plan tool 调用成功 | INFO | planning_tool | `method`、`result` |
-| 工具执行结束 | END | planning_tool | `method`、`step`、`success`、`next_node=planner` |
-| 进入检索编排节点 | START | **retriever** | `text_query`、`data_query`、`knowledge`、`data`（是否启用） |
-| 并行执行知识检索与元数据检索 | INFO | retriever | — |
-| 检索汇总 | INFO | retriever | `knowledge_chunks`、`data_files` |
-| 检索结束 | END | retriever | `knowledge_chunks`、`data_files` |
-| 进入文档检索 | START | **retrieve_knowledge** | `query`、`enabled`；未启用时 `enabled=false` |
-| 知识检索未启用，跳过 | INFO | retrieve_knowledge | — |
-| 正在查询文档 | INFO | retrieve_knowledge | `query` |
-| 文档检索完成 | INFO | retrieve_knowledge | `count` |
-| 检索结束 | END | retrieve_knowledge | `count`、`query`；跳过时 `skipped=true` |
-| 进入元数据检索 | START | **retrieve_data** | `query`、`enabled` |
-| 结构化数据检索未启用，跳过 | INFO | retrieve_data | — |
-| 正在检索结构化元数据 | INFO | retrieve_data | `query` |
-| 元数据检索完成 | INFO | retrieve_data | `hit_count`、`file_paths` |
-| 检索结束 | END | retrieve_data | `hit_count`、`paths` |
-| 进入数据处理决策 | START | **data_processor** | `file_path`、`process_step`、`max_steps`、`prior_tool_steps` |
-| 数据处理未启用，跳过 | INFO | data_processor | — |
-| 无可用数据文件，跳过处理 | INFO | data_processor | — |
-| 命中缓存的处理结果 | INFO | data_processor | `path` |
-| 数据处理步数已达上限，结束 | INFO | data_processor | `max_steps` |
-| LLM 数据处理决策 | INFO | data_processor | `action`、`tool_name` |
-| LLM JSON 解析失败，使用兜底 | INFO | data_processor | `error` |
-| 触发 data tool 调用 | INFO | data_processor | `tool_name`、`params` |
-| 决策结束 | END | data_processor | `process_done`、`next_node=data_tool`、`tool_name`；完成时含 `tool_steps` |
-| 进入数据工具执行 | START | **data_tool** | `tool_name`、`step`、`file_path`、`params` |
-| 无待执行 data tool，跳过 | INFO | data_tool | — |
-| 触发 data tool 调用 | INFO | data_tool | `tool_name` |
-| 图表生成成功 | INFO | data_tool | `path`、`chart_type` |
-| 执行成功，已保存 artifact | INFO | data_tool | `path`（sql_execute / pandas_execute） |
-| 工具调用成功 | INFO | data_tool | `tool_name`、`artifact` |
-| 工具执行结束 | END | data_tool | `tool_name`、`step`、`success`、`next_node=data_processor` |
-| 进入报告/回答节点 | START | **reporter** | `session_id`、`query`、`knowledge_chunks`、`meta_hits`、`report_step`、`retrieval_round` |
-| 上下文不足，触发补充检索 | INFO | reporter | `round` |
-| 无法查询到目标数据 | INFO | reporter | — |
-| LLM 报告决策 | INFO | reporter | `action`、`tool_name` |
-| 触发补充文本检索 | INFO | reporter | `text_query` |
-| 触发补充数据检索 | INFO | reporter | `data_query` |
-| 触发 report tool 调用 | INFO | reporter | `tool_name`、`params` |
-| 生成最终输出 | INFO | reporter | `report_mode` |
-| Markdown 报告已写入 | INFO | reporter | `path` |
-| 回答生成成功 | INFO | reporter | `answer_len` |
-| 报告/回答结束 | END | reporter | `report_done`、`status`、`answer_len`；报告模式含 `markdown_path`；补充检索时 `need_more_retrieval=true` |
-| 进入报告工具执行 | START | **report_tool** | `tool_name`、`step`、`params` |
-| 无待执行 report tool，跳过 | INFO | report_tool | — |
-| 触发 report tool 调用 | INFO | report_tool | `tool_name` |
-| report tool 调用成功 | INFO | report_tool | `tool_name`、`path` |
-| 工具执行结束 | END | report_tool | `tool_name`、`step`、`success`、`next_node=reporter` |
+
+| 日志说明                    | 阶段    | 节点                     | 附带字段（示例）                                                                                     |
+| ----------------------- | ----- | ---------------------- | -------------------------------------------------------------------------------------------- |
+| 进入规划节点                  | START | **planner**            | `session_id`、`query`、`plan_step`、`max_steps`、`history_loaded`                                |
+| 正在规划链路开关与 query         | INFO  | planner                | `user_query`                                                                                 |
+| 规划步数已达上限，使用兜底 enables   | INFO  | planner                | `enables`（knowledge/data/process/chart/report）                                               |
+| LLM 规划解析完成              | INFO  | planner                | `action`、`method`、`enables`                                                                  |
+| LLM 规划 JSON 解析失败，使用规则兜底 | INFO  | planner                | `error`                                                                                      |
+| 本次规划链路                  | INFO  | planner                | `enables`、`text_query`、`data_query`、`data_process_plan`                                      |
+| 初始化 session 与步数上限       | INFO  | planner                | `session_id`                                                                                 |
+| 触发 plan tool 调用         | INFO  | planner                | `method`、`params`                                                                            |
+| 生成 query 成功             | INFO  | planner                | `text_query`、`data_query`                                                                    |
+| 规划结束                    | END   | planner                | `plan_done`、`text_query`、`data_query`、`enables`；转 tool 时含 `next_node=planning_tool`、`method` |
+| 进入规划工具节点                | START | **planning_tool**      | `method`、`step`、`params`；无任务时为 `plan_action=skip`                                            |
+| 无待执行 plan tool，跳过       | INFO  | planning_tool          | —                                                                                            |
+| 触发 plan tool 调用         | INFO  | planning_tool          | `method`                                                                                     |
+| plan tool 调用成功          | INFO  | planning_tool          | `method`、`result`                                                                            |
+| 工具执行结束                  | END   | planning_tool          | `method`、`step`、`success`、`next_node=planner`                                                |
+| 进入检索编排节点                | START | **retriever**          | `text_query`、`data_query`、`knowledge`、`data`（是否启用）                                           |
+| 并行执行知识检索与元数据检索          | INFO  | retriever              | —                                                                                            |
+| 检索汇总                    | INFO  | retriever              | `knowledge_chunks`、`data_files`                                                              |
+| 检索结束                    | END   | retriever              | `knowledge_chunks`、`data_files`                                                              |
+| 进入文档检索                  | START | **retrieve_knowledge** | `query`、`enabled`；未启用时 `enabled=false`                                                       |
+| 知识检索未启用，跳过              | INFO  | retrieve_knowledge     | —                                                                                            |
+| 正在查询文档                  | INFO  | retrieve_knowledge     | `query`                                                                                      |
+| 文档检索完成                  | INFO  | retrieve_knowledge     | `count`                                                                                      |
+| 检索结束                    | END   | retrieve_knowledge     | `count`、`query`；跳过时 `skipped=true`                                                           |
+| 进入元数据检索                 | START | **retrieve_data**      | `query`、`enabled`                                                                            |
+| 结构化数据检索未启用，跳过           | INFO  | retrieve_data          | —                                                                                            |
+| 正在检索结构化元数据              | INFO  | retrieve_data          | `query`                                                                                      |
+| 元数据检索完成                 | INFO  | retrieve_data          | `hit_count`、`file_paths`                                                                     |
+| 检索结束                    | END   | retrieve_data          | `hit_count`、`paths`                                                                          |
+| 进入数据处理决策                | START | **data_processor**     | `file_path`、`process_step`、`max_steps`、`prior_tool_steps`                                    |
+| 数据处理未启用，跳过              | INFO  | data_processor         | —                                                                                            |
+| 无可用数据文件，跳过处理            | INFO  | data_processor         | —                                                                                            |
+| 命中缓存的处理结果               | INFO  | data_processor         | `path`                                                                                       |
+| 数据处理步数已达上限，结束           | INFO  | data_processor         | `max_steps`                                                                                  |
+| LLM 数据处理决策              | INFO  | data_processor         | `action`、`tool_name`                                                                         |
+| LLM JSON 解析失败，使用兜底      | INFO  | data_processor         | `error`                                                                                      |
+| 触发 data tool 调用         | INFO  | data_processor         | `tool_name`、`params`                                                                         |
+| 决策结束                    | END   | data_processor         | `process_done`、`next_node=data_tool`、`tool_name`；完成时含 `tool_steps`                           |
+| 进入数据工具执行                | START | **data_tool**          | `tool_name`、`step`、`file_path`、`params`                                                      |
+| 无待执行 data tool，跳过       | INFO  | data_tool              | —                                                                                            |
+| 触发 data tool 调用         | INFO  | data_tool              | `tool_name`                                                                                  |
+| 图表生成成功                  | INFO  | data_tool              | `path`、`chart_type`                                                                          |
+| 执行成功，已保存 artifact       | INFO  | data_tool              | `path`（sql_execute / pandas_execute）                                                         |
+| 工具调用成功                  | INFO  | data_tool              | `tool_name`、`artifact`                                                                       |
+| 工具执行结束                  | END   | data_tool              | `tool_name`、`step`、`success`、`next_node=data_processor`                                      |
+| 进入报告/回答节点               | START | **reporter**           | `session_id`、`query`、`knowledge_chunks`、`meta_hits`、`report_step`、`retrieval_round`          |
+| 上下文不足，触发补充检索            | INFO  | reporter               | `round`                                                                                      |
+| 无法查询到目标数据               | INFO  | reporter               | —                                                                                            |
+| LLM 报告决策                | INFO  | reporter               | `action`、`tool_name`                                                                         |
+| 触发补充文本检索                | INFO  | reporter               | `text_query`                                                                                 |
+| 触发补充数据检索                | INFO  | reporter               | `data_query`                                                                                 |
+| 触发 report tool 调用       | INFO  | reporter               | `tool_name`、`params`                                                                         |
+| 生成最终输出                  | INFO  | reporter               | `report_mode`                                                                                |
+| Markdown 报告已写入          | INFO  | reporter               | `path`                                                                                       |
+| 回答生成成功                  | INFO  | reporter               | `answer_len`                                                                                 |
+| 报告/回答结束                 | END   | reporter               | `report_done`、`status`、`answer_len`；报告模式含 `markdown_path`；补充检索时 `need_more_retrieval=true`   |
+| 进入报告工具执行                | START | **report_tool**        | `tool_name`、`step`、`params`                                                                  |
+| 无待执行 report tool，跳过     | INFO  | report_tool            | —                                                                                            |
+| 触发 report tool 调用       | INFO  | report_tool            | `tool_name`                                                                                  |
+| report tool 调用成功        | INFO  | report_tool            | `tool_name`、`path`                                                                           |
+| 工具执行结束                  | END   | report_tool            | `tool_name`、`step`、`success`、`next_node=reporter`                                            |
+
 
 > `AGENT_NODE_LOG_LEVEL=ERROR` 时仅输出失败路径（`fail()`，如 tool 调用失败/异常/未找到）；`DEBUG` 在 INFO 基础上额外输出 LLM 调用细节；`OFF` 或 `ENABLE_AGENT_NODE_LOG=false` 关闭全部节点日志。
+

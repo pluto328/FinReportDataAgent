@@ -63,7 +63,7 @@ def build_planner_prompt(state: AgentState, runtime: AgentRuntime) -> str:
         "你是任务规划器"
         "你需要：1.判断用户问题是否有效，规则为"
         f"{entry_rules}"
-        "2.判断问题含有刚才/之前/继续/上述/同样等追问上文时，调用工具load_history_context。"
+        "2.判断问题含有刚才/之前/继续/上述/同样等追问上文时，调用工具load_history_context。action = call_tool。否则action = done。"
         "3.分析问题，有历史内容时结合历史问题分析，判断具体需求，确定以下操作是否进行:知识检索、数据检索、数据处理、图表生成、报告生成。并填写enable_*，填true或false。规则为"
         f"{operation_rules}\n"
         "4.如果需要进行文本检索，提取需求，扩写，尽量检索出更多有效信息，并填写text_query。\n"
