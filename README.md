@@ -405,7 +405,7 @@ poetry run python scripts/monitor.py
 | `CACHE_PATH`                                                | 解析缓存 + **会话历史**               | `./data/parsed_cache`         |
 | `REPORT_OUTPUT_PATH`                                        | 报告与图表                         | `./data/reports`              |
 | `MAX_PLAN_TOOL_STEPS`                                       | planner ↔ planning_tool       | `1`                           |
-| `MAX_PROCESS_TOOL_STEPS`                                    | data_processor ↔ data_tool    | `5`                           |
+| `MAX_PROCESS_TOOL_STEPS`                                    | data_processor ↔ data_tool    | `20`                          |
 | `MAX_REPORT_TOOL_STEPS`                                     | reporter ↔ report_tool        | `5`                           |
 | `MAX_RETRIEVAL_ROUNDS`                                      | reporter 二次检索上限               | `3`                           |
 | `CONTEXT_SIZE_THRESHOLD_CHARS`                              | read_data_file 默认截断           | `12000`                       |

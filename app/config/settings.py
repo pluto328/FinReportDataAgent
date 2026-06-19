@@ -126,7 +126,7 @@ class Settings(BaseSettings):
     meta_dense_weight: float = Field(default=0.6, ge=0.0)
     max_retrieval_rounds: int = Field(default=3, ge=1)
     max_plan_tool_steps: int = Field(default=1, ge=1)
-    max_process_tool_steps: int = Field(default=5, ge=1)
+    max_process_tool_steps: int = Field(default=20, ge=1)
     max_report_tool_steps: int = Field(default=5, ge=1)
     max_sql_retries: int = Field(default=3, ge=1)
     max_context_tool_steps: int = Field(default=5, ge=1)

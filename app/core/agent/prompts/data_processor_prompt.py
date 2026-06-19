@@ -22,8 +22,8 @@ def build_data_processor_prompt(state: AgentState, runtime: AgentRuntime) -> str
     tool_rules = """第一步，结合处理需求，对相关文件进行预览（preview_read，不产生新文件，无需 artifact_description）。
     第二步，如果需要进行进一步数据处理，则调用工具计算，只计算不绘图。
     纯筛选数据，则调用 data_filter 工具。
-    逻辑复杂、执行代码，则调用 pandas_execute 工具。
-    需 SQL 查询，则调用 sql_execute 工具。
+    逻辑复杂、执行 code，则调用 pandas_execute（code 禁止 import、pd.read_*、任何注释 #，直接使用 df/pd/np，结果赋给 result 或写回 df）。
+    需 SQL 查询，则调用 sql_execute（sql 禁止任何注释 -- 或 /* */，仅 SELECT 语句正文）。
     第三步，如果需要画图，则调用 make_chart 工具。
     凡会保存新文件的工具（data_filter、sql_execute、pandas_execute、make_chart），
     必须在 params 中填写 artifact_description：用简短中文说明该文件是什么，
@@ -49,7 +49,7 @@ def build_data_processor_prompt(state: AgentState, runtime: AgentRuntime) -> str
         '"data_process_plan":""}\n'
         "示例（筛选并保存）："
         '{"action":"call_tool","tool_name":"pandas_execute",'
-        '"params":{"file_path":"/abs/path/data.csv","code":"...",'
+        '"params":{"file_path":"/abs/path/data.csv","code":"df=df[df[\'col\']>0]; result=df",'
         '"artifact_description":"负债榜前五名数据"},"data_process_plan":""}\n'
         f"可调用 data 工具:\n{tool_catalog}\n"
         "调用工具规则为：\n"
