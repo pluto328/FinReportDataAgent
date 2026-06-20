@@ -25,6 +25,7 @@ def build_data_processor_prompt(state: AgentState, runtime: AgentRuntime) -> str
     tool_catalog = data_tool_catalog(runtime)
     tool_rules = """
     preview_read只对所检索的原始数据使用，不能对中间数据使用，中间产物的预览从工具调用历史中查看。
+    生成pandas代码或sql代码需要尽量一步到位，不要多次连续调用pandas_execute或连续调用sql_execute。
     逻辑复杂，则生成pandas代码后使用pandas_execute（code 禁止 import、pd.read_*、任何注释 #，直接使用 df/pd/np，结果赋给 result 或写回 df）。
     需 SQL 查询，则调用 sql_execute（sql 禁止任何注释 -- 或 /* */，仅 SELECT 语句正文）。
     """
@@ -39,6 +40,7 @@ def build_data_processor_prompt(state: AgentState, runtime: AgentRuntime) -> str
         "请结合 data_process_plan 与工具调用历史决定下一步："
         "若已知数据已满足要求则 action=done；"
         "若需继续处理则 action=call_tool 并选择合适工具；"
+        "若当前所执行步骤和所得数据已无法满足需求，需重新规划数据处理计划，则 action=replan 并填写 data_process_plan。"
         "仅输出 JSON，不要输出任何其他内容："
         '{"action":"call_tool|done|replan",'
         '"tool_name":"",'
