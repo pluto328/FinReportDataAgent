@@ -1,4 +1,4 @@
-﻿"""ES full-text retriever for text chunks."""
+﻿"""ES keyword full-text retriever for text chunks."""
 
 from __future__ import annotations
 

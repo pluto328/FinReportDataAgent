@@ -15,7 +15,6 @@ if str(ROOT) not in sys.path:
 
 from app.common.logger import logger, setup_logger
 from app.config.settings import Settings, get_settings
-from app.core.retrieval.bm25_retriever import BM25Retriever
 from app.core.retrieval.dense_retriever import DenseRetriever
 from app.core.retrieval.ensemble import EnsembleRetriever
 from app.core.retrieval.es_retriever import ESRetriever
@@ -27,10 +26,9 @@ from app.schemas.metrics import EvalMetrics
 
 
 SCHEMES: list[tuple[str, dict[str, bool | float]]] = [
-    ("full_hybrid", {"enable_es": True, "enable_bm25": True, "enable_dense": True}),
-    ("es_only", {"enable_es": True, "enable_bm25": False, "enable_dense": False}),
-    ("bm25_only", {"enable_es": False, "enable_bm25": True, "enable_dense": False}),
-    ("dense_only", {"enable_es": False, "enable_bm25": False, "enable_dense": True}),
+    ("hybrid_es_dense", {"enable_es": True, "enable_dense": True}),
+    ("es_only", {"enable_es": True, "enable_dense": False}),
+    ("dense_only", {"enable_es": False, "enable_dense": True}),
 ]
 
 
@@ -65,12 +63,12 @@ async def _eval_scheme(
     es = ESClient(settings)
     vectors = VectorClient(settings)
     embed = EmbeddingService(settings)
+    reranker = Reranker(embed)
     retriever = EnsembleRetriever(
         settings,
         ESRetriever(es),
-        BM25Retriever(es),
         DenseRetriever(vectors, embed),
-        Reranker(embed),
+        reranker,
     )
     recalls: list[float] = []
     start = time.perf_counter()
@@ -94,8 +92,8 @@ async def _eval_scheme(
         mrr=mean_recall,
         config={
             "enable_es": settings.enable_es,
-            "enable_bm25": settings.enable_bm25,
             "enable_dense": settings.enable_dense,
+            "min_rerank_score": settings.min_rerank_score,
             "elapsed_sec": round(elapsed, 3),
         },
     )

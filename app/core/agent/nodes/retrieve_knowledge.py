@@ -36,8 +36,8 @@ async def retrieve_knowledge_node(state: AgentState, runtime: AgentRuntime) -> d
     log.start(query=query, enabled=True)
     log.info("正在查询文档", query=query)
     hits = await runtime.text_retriever.search(query)
-    min_score = runtime.settings.min_retrieval_score
-    log.info("文档检索完成", count=len(hits), min_score=min_score)
+    min_score = runtime.settings.min_rerank_score
+    log.info("文档检索完成", count=len(hits), min_rerank_score=min_score)
     log.end(count=len(hits), query=query)
     return {"knowledge_chunks": hits, **append_node(state, "retrieve_knowledge")}
 

@@ -16,7 +16,7 @@ from app.config.paths import (
     normalize_config_path,
 )
 
-RetrieverName = Literal["es", "bm25", "dense"]
+RetrieverName = Literal["es", "dense"]
 MetaRetrieverName = Literal["keyword", "dense"]
 
 
@@ -103,20 +103,18 @@ class Settings(BaseSettings):
         default="http://127.0.0.1:5500,http://localhost:5500",
     )
 
-    # --- retrieval ablation ---
-    enable_es: bool = Field(default=True)
-    enable_bm25: bool = Field(default=True)
-    enable_dense: bool = Field(default=True)
-    dense_weight: float = Field(default=0.5, ge=0.0)
-    es_weight: float = Field(default=0.3, ge=0.0)
-    bm25_weight: float = Field(default=0.2, ge=0.0)
+    # --- text retrieval (keyword ES + dense vector) ---
+    enable_es: bool = Field(default=True, description="ES keyword full-text recall")
+    enable_dense: bool = Field(default=True, description="Chroma dense vector recall")
+    es_weight: float = Field(default=0.4, ge=0.0, description="Keyword channel weight in fusion")
+    dense_weight: float = Field(default=0.6, ge=0.0, description="Vector similarity channel weight")
     base_top_k: int = Field(default=20, ge=1)
     final_top_k: int = Field(default=10, ge=1)
-    min_retrieval_score: float = Field(
+    min_rerank_score: float = Field(
         default=0.65,
         ge=0.0,
         le=1.0,
-        description="Minimum bge-m3 cosine similarity to keep a retrieval hit",
+        description="Minimum cross-encoder rerank score to keep a hit",
     )
 
     # --- structured meta retrieval ---
@@ -172,10 +170,10 @@ class Settings(BaseSettings):
         if self.final_top_k > self.base_top_k:
             msg = "FINAL_TOP_K must not exceed BASE_TOP_K"
             raise ValueError(msg)
-        if not (self.enable_es or self.enable_bm25 or self.enable_dense):
-            msg = "at least one retriever must be enabled (ENABLE_ES/BM25/DENSE)"
+        if not (self.enable_es or self.enable_dense):
+            msg = "at least one retriever must be enabled (ENABLE_ES / ENABLE_DENSE)"
             raise ValueError(msg)
-        weight_sum = self.es_weight + self.bm25_weight + self.dense_weight
+        weight_sum = self.es_weight + self.dense_weight
         if abs(weight_sum - 1.0) > 1e-6:
             msg = f"retrieval weights must sum to 1.0, got {weight_sum:.4f}"
             raise ValueError(msg)
@@ -232,8 +230,6 @@ class Settings(BaseSettings):
         retrievers: list[RetrieverName] = []
         if self.enable_es:
             retrievers.append("es")
-        if self.enable_bm25:
-            retrievers.append("bm25")
         if self.enable_dense:
             retrievers.append("dense")
         return retrievers
@@ -242,7 +238,6 @@ class Settings(BaseSettings):
         """Return weight map keyed by retriever name."""
         return {
             "es": self.es_weight,
-            "bm25": self.bm25_weight,
             "dense": self.dense_weight,
         }
 

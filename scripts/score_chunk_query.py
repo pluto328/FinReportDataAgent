@@ -1,4 +1,4 @@
-"""Score cosine similarity (and optional rerank) between a query and text chunk(s)."""
+"""Score query–text relevance: dense cosine (diagnostic) and rerank score (production threshold)."""
 
 from __future__ import annotations
 
@@ -18,16 +18,19 @@ from app.infrastructure.embedding_service import EmbeddingService
 
 
 async def _score_one(embed: EmbeddingService, query: str, text: str, *, with_rerank: bool) -> dict:
+    settings = get_settings()
     sim = await embed.similarity(query, text)
     out: dict = {
         "query": query,
         "text_preview": text[:200] + ("…" if len(text) > 200 else ""),
         "cosine_similarity": round(sim, 6),
-        "min_retrieval_score": get_settings().min_retrieval_score,
-        "passes_threshold": sim >= get_settings().min_retrieval_score,
+        "min_rerank_score": settings.min_rerank_score,
     }
-    if with_rerank:
-        out["rerank_score"] = round(await embed.rerank_score(query, text), 6)
+    rerank_score = await embed.rerank_score(query, text)
+    out["rerank_score"] = round(rerank_score, 6)
+    out["passes_threshold"] = rerank_score >= settings.min_rerank_score
+    if not with_rerank:
+        out["note"] = "rerank_score is always computed; threshold uses cross-encoder rerank"
     return out
 
 
@@ -39,8 +42,12 @@ query = "人工智能相关产业的规模将增长到10万亿元以上。"
 
 chunk = "金融产业"
 query = "龙虎榜"
+
+
 async def main() -> None:
-    parser = argparse.ArgumentParser(description="Test query–chunk similarity scores")
+    parser = argparse.ArgumentParser(
+        description="Score query–chunk relevance (vector cosine + rerank threshold)"
+    )
     parser.add_argument("--query", default=query, help="Search query text")
     parser.add_argument("--chunk", default=chunk, help="Chunk text content")
     parser.add_argument("--chunk-file", default="", help="Read chunk text from file (UTF-8)")
@@ -49,7 +56,11 @@ async def main() -> None:
         default="",
         help='JSON file with list of {"text": "..."} objects for batch scoring',
     )
-    parser.add_argument("--rerank", action="store_true", help="Also compute cross-encoder rerank score")
+    parser.add_argument(
+        "--rerank",
+        action="store_true",
+        help="(default behavior) include rerank_score and passes_threshold in output",
+    )
     parser.add_argument("--out", default="", help="Optional JSON output path")
     args = parser.parse_args()
 
@@ -63,7 +74,7 @@ async def main() -> None:
             text = str(item.get("text", "") or item.get("content", ""))
             if not text:
                 continue
-            row = await _score_one(embed, args.query, text, with_rerank=args.rerank)
+            row = await _score_one(embed, args.query, text, with_rerank=True)
             row["index"] = i
             results.append(row)
     else:
@@ -72,7 +83,7 @@ async def main() -> None:
             text = Path(args.chunk_file).read_text(encoding="utf-8")
         if not text.strip():
             raise SystemExit("Provide --chunk, --chunk-file, or --chunks-json")
-        results.append(await _score_one(embed, args.query, text, with_rerank=args.rerank))
+        results.append(await _score_one(embed, args.query, text, with_rerank=True))
 
     for row in results:
         print(json.dumps(row, ensure_ascii=False, indent=2))

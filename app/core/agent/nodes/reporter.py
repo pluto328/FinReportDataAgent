@@ -149,7 +149,7 @@ async def reporter_node(state: AgentState, runtime: AgentRuntime) -> dict:
 
     if not chunks and not meta and not process_result and not plan_context and not report_context:
         if _retrieval_insufficient(state):
-            log.info("检索已启用但未达到相似度阈值", min_score=runtime.settings.min_retrieval_score)
+            log.info("检索已启用但未达到 rerank 阈值", min_rerank_score=runtime.settings.min_rerank_score)
             log.end(status="not_found", retrieval_insufficient=True)
             return {
                 "final_answer": INSUFFICIENT_DATA_MESSAGE,

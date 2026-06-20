@@ -1,4 +1,4 @@
-"""Text chunk hybrid ensemble retriever."""
+"""Text chunk hybrid ensemble: ES keyword + dense vector similarity."""
 
 from __future__ import annotations
 
@@ -6,11 +6,10 @@ import asyncio
 
 from app.config.settings import Settings
 from app.core.retrieval.base import BaseRetriever
-from app.core.retrieval.bm25_retriever import BM25Retriever
 from app.core.retrieval.dense_retriever import DenseRetriever
 from app.core.retrieval.es_retriever import ESRetriever
+from app.core.retrieval.fusion import fuse_weighted_batches
 from app.core.retrieval.reranker import Reranker
-from app.core.retrieval.score_filter import filter_chunks_by_min_score
 from app.schemas.document import ScoredChunk
 
 
@@ -19,14 +18,12 @@ class EnsembleRetriever:
         self,
         settings: Settings,
         es: ESRetriever,
-        bm25: BM25Retriever,
         dense: DenseRetriever,
         reranker: Reranker,
     ) -> None:
         self._settings = settings
         self._map: dict[str, BaseRetriever] = {
             "es": es,
-            "bm25": bm25,
             "dense": dense,
         }
         self._reranker = reranker
@@ -38,26 +35,20 @@ class EnsembleRetriever:
 
         tasks = [self._map[name].search(query, k) for name in enabled]
         batches = await asyncio.gather(*tasks)
+        channel_weights = [weights[name] for name in enabled]
 
-        merged: dict[str, ScoredChunk] = {}
-        for name, batch in zip(enabled, batches):
-            w = weights[name]
-            for item in batch:
-                key = item.chunk.chunk_id
-                score = item.score * w
-                if key in merged:
-                    merged[key].score += score
-                else:
-                    copy = item.model_copy(deep=True)
-                    copy.score = score
-                    merged[key] = copy
-
-        ranked = sorted(merged.values(), key=lambda x: x.score, reverse=True)
+        ranked = fuse_weighted_batches(
+            list(batches),
+            channel_weights,
+            key_fn=lambda item: item.chunk.chunk_id,
+            score_fn=lambda item: item.score,
+            set_score=lambda item, s: item.model_copy(update={"score": s}),
+            copy_fn=lambda item: item.model_copy(deep=True),
+        )
         final_k = self._settings.final_top_k
-        reranked = await self._reranker.rerank(query, ranked[:k], final_k)
-        return await filter_chunks_by_min_score(
-            self._reranker._embed,
+        return await self._reranker.rerank(
             query,
-            reranked,
-            self._settings.min_retrieval_score,
+            ranked[:k],
+            final_k,
+            min_score=self._settings.min_rerank_score,
         )

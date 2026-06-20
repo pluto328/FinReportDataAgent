@@ -9,7 +9,6 @@ from fastapi import Request
 from app.config.settings import Settings, get_settings
 from app.core.agent.graph import build_agent_graph
 from app.core.agent.state import AgentRuntime
-from app.core.retrieval.bm25_retriever import BM25Retriever
 from app.core.retrieval.dense_retriever import DenseRetriever
 from app.core.retrieval.ensemble import EnsembleRetriever
 from app.core.retrieval.es_retriever import ESRetriever
@@ -47,15 +46,14 @@ class AppContainer:
         embed = EmbeddingService(s)
         llm = LLMClient(s)
         es_r = ESRetriever(es)
-        bm25 = BM25Retriever(es)
         dense = DenseRetriever(vectors, embed)
         reranker = Reranker(embed)
-        text_retriever = EnsembleRetriever(s, es_r, bm25, dense, reranker)
+        text_retriever = EnsembleRetriever(s, es_r, dense, reranker)
         meta_retriever = MetaEnsembleRetriever(
             s,
             MetaKeywordRetriever(es),
             MetaDenseRetriever(vectors, embed),
-            embed,
+            reranker,
         )
         plan_registry = get_plan_registry()
         data_registry = get_data_registry()
