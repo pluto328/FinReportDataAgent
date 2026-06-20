@@ -94,6 +94,13 @@ def resolve_processed_path(
         idx += 1
 
 
+def preview_dataframe_rows(df: pd.DataFrame, rows: int = 3) -> list[dict[str, Any]]:
+    """Return first N rows as records for tool responses and prompts."""
+    if df.empty:
+        return []
+    return df.head(rows).to_dict(orient="records")
+
+
 def save_dataframe_processed(
     df: pd.DataFrame,
     source_path: str,

@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 from app.config.settings import Settings, get_settings
-from app.core.tools.artifact_utils import save_dataframe_processed
+from app.core.tools.artifact_utils import preview_dataframe_rows, save_dataframe_processed
 from app.core.tools.base_tool import BaseTool
 from app.core.tools.structured_ops import read_table_full
 
@@ -72,10 +72,9 @@ class PandasExecuteTool(BaseTool):
     description = (
         "对结构化数据执行 pandas 代码，结果 DataFrame 保存为新文件。"
         "入参：file_path（绝对路径）、code（Python 代码，已预置 df/pd/np，禁止 import、pd.read_* 与任何注释，"
-        "结果赋给 result 或写回 df）、"
         "artifact_name（必填，保存文件名含后缀，根据描述取名，不与已有中间数据文件名重复）、"
         "artifact_description（必填，产物中文说明，如「负债榜前五名数据」）。"
-        "返回：path（保存后的绝对路径）；非 DataFrame 结果返回 error。"
+        "返回：path（保存后的绝对路径）、preview（产物前3行）；非 DataFrame 结果返回 error。"
     )
 
     async def run(self, **kwargs: Any) -> dict[str, Any]:
@@ -98,7 +97,7 @@ class PandasExecuteTool(BaseTool):
                     result, file_path, session_id, settings, mode="tool",
                     artifact_name=str(kwargs.get("artifact_name", "")),
                 )
-                return {"path": ref.path}
+                return {"path": ref.path, "preview": preview_dataframe_rows(result)}
             return {"error": "result must be a DataFrame", "error_code": "invalid_result"}
         except Exception as exc:
             return {"error": str(exc), "error_code": type(exc).__name__}

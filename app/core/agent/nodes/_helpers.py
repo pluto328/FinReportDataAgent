@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 from typing import Any
 
 from app.core.agent.state import AgentRuntime, AgentState
@@ -127,11 +128,26 @@ def format_report_tool_history(steps: list[ReportStepResult]) -> str:
         return "（尚无报告工具执行记录）"
     lines: list[str] = []
     for s in steps:
-        payload = s.result if not s.error else {"error": s.error}
-        lines.append(
-            f"步骤{s.step} {s.tool_name}({json.dumps(s.params, ensure_ascii=False)}) "
-            f"-> {json.dumps(payload, ensure_ascii=False)[:400]}"
-        )
+        if s.error:
+            lines.append(
+                f"步骤{s.step} {s.tool_name}({json.dumps(s.params, ensure_ascii=False)}) "
+                f"-> 失败: {s.error}"
+            )
+            continue
+        payload = s.result if isinstance(s.result, dict) else {}
+        if s.tool_name == "read_data_file" and payload.get("content") is not None:
+            path = payload.get("path", "")
+            name = Path(path).name if path else "unknown"
+            chars = payload.get("char_count", len(str(payload.get("content", ""))))
+            truncated = "，已截断" if payload.get("truncated") else ""
+            lines.append(
+                f"步骤{s.step} read_data_file({name}) -> 成功，{chars} 字符{truncated}"
+            )
+        else:
+            lines.append(
+                f"步骤{s.step} {s.tool_name}({json.dumps(s.params, ensure_ascii=False)}) "
+                f"-> {json.dumps(payload, ensure_ascii=False)[:400]}"
+            )
     return "\n".join(lines)
 
 

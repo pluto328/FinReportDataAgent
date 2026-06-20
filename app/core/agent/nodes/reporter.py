@@ -228,27 +228,60 @@ async def reporter_node(state: AgentState, runtime: AgentRuntime) -> dict:
         }
 
     force_done = report_step >= max_report_steps or bool(state.get("report_done"))
-    prompt = build_reporter_prompt(state, runtime, force_done=force_done)
     report_mode = bool(
         state.get("report_mode") or (state.get("node_flags") and state.get("node_flags").enable_report)
     )
     stream_field = "report" if report_mode else "answer"
-    log.debug("调用 LLM", report_step=report_step, force_done=force_done, stream_field=stream_field)
-    raw = await invoke_llm_decision(
-        runtime.llm,
-        prompt,
-        phase="reporter",
-        stream_field=stream_field,
-        stream_as="answer",
-        emit_thinking=False,
-    )
-    parsed = parse_reporter_response(raw)
-    action = parsed["action"]
-    tool_name = parsed["tool_name"]
-    params = parsed["params"]
-    text_q = parsed["text_query"]
-    data_q = parsed["data_query"]
-    log.info("LLM 报告决策", action=action, tool_name=tool_name if action == "call_tool" else "")
+
+    parsed: dict = {}
+    action = "done"
+    tool_name = ""
+    params: dict = {}
+    text_q = ""
+    data_q = ""
+
+    for attempt in range(3):
+        prompt = build_reporter_prompt(state, runtime, force_done=force_done)
+        if attempt > 0:
+            log.debug("重复 read_data_file 后重问 LLM", attempt=attempt + 1)
+        else:
+            log.debug("调用 LLM", report_step=report_step, force_done=force_done, stream_field=stream_field)
+        raw = await invoke_llm_decision(
+            runtime.llm,
+            prompt,
+            phase="reporter",
+            stream_field=stream_field if attempt == 0 else None,
+            stream_as="answer",
+            emit_thinking=False,
+        )
+        parsed = parse_reporter_response(raw)
+        action = parsed["action"]
+        tool_name = parsed["tool_name"]
+        params = parsed["params"]
+        text_q = parsed["text_query"]
+        data_q = parsed["data_query"]
+        log.info("LLM 报告决策", action=action, tool_name=tool_name if action == "call_tool" else "")
+
+        if force_done or action != "call_tool" or tool_name != "read_data_file":
+            break
+
+        session_id = state.get("session_id", "")
+        extra_paths = list(state.get("data_file_paths") or [])
+        extra_paths.extend(state.get("processed_data_refs") or [])
+        raw_path = str(params.get("path", ""))
+        resolved = resolve_catalog_path(
+            session_id, raw_path, runtime.settings, extra_paths=extra_paths
+        )
+        if resolved:
+            params["path"] = resolved
+        loaded_paths = set(report_context.get("loaded_paths") or [])
+        if report_context.get("loaded_path"):
+            loaded_paths.add(str(report_context["loaded_path"]))
+        if resolved and resolved in loaded_paths:
+            log.info("跳过重复 read_data_file", path=resolved)
+            force_done = report_step + 1 >= max_report_steps
+            continue
+        break
 
     if not force_done and action == "retrieve_text" and text_q and retrieval_round + 1 < max_rounds:
         log.info("触发补充文本检索", text_query=text_q)
@@ -286,15 +319,16 @@ async def reporter_node(state: AgentState, runtime: AgentRuntime) -> dict:
             extra_paths = list(state.get("data_file_paths") or [])
             extra_paths.extend(state.get("processed_data_refs") or [])
             raw_path = str(params.get("path", ""))
-            resolved = resolve_catalog_path(
-                session_id, raw_path, runtime.settings, extra_paths=extra_paths
-            )
-            if resolved:
-                params["path"] = resolved
-            elif not raw_path:
-                catalog = get_session_catalog(session_id, runtime.settings)
-                if catalog:
-                    params["path"] = next(iter(catalog))
+            if not params.get("path"):
+                resolved = resolve_catalog_path(
+                    session_id, raw_path, runtime.settings, extra_paths=extra_paths
+                )
+                if resolved:
+                    params["path"] = resolved
+                else:
+                    catalog = get_session_catalog(session_id, runtime.settings)
+                    if catalog:
+                        params["path"] = next(iter(catalog))
         log.info("触发 report tool 调用", tool_name=tool_name, params=params)
         log.end(report_done=False, next_node="report_tool", tool_name=tool_name)
         return {

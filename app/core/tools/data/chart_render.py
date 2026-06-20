@@ -7,8 +7,33 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import pandas as pd
+from matplotlib import font_manager
 
 from app.schemas.structured import ChartSpec, ChartType
+
+_CJK_FONT_CONFIGURED = False
+
+
+def _configure_cjk_font() -> None:
+    """Pick a CJK-capable sans-serif font so axis labels render on Windows/Linux."""
+    global _CJK_FONT_CONFIGURED
+    if _CJK_FONT_CONFIGURED:
+        return
+    candidates = (
+        "Microsoft YaHei",
+        "SimHei",
+        "PingFang SC",
+        "Noto Sans CJK SC",
+        "Source Han Sans SC",
+        "WenQuanYi Micro Hei",
+    )
+    available = {f.name for f in font_manager.fontManager.ttflist}
+    for name in candidates:
+        if name in available:
+            plt.rcParams["font.sans-serif"] = [name, "DejaVu Sans"]
+            break
+    plt.rcParams["axes.unicode_minus"] = False
+    _CJK_FONT_CONFIGURED = True
 
 
 async def render_chart(
@@ -32,17 +57,23 @@ async def render_chart(
     fig_path = output_path or output_dir / "chart_processed.png"
 
     def _plot() -> None:
-        plt.figure(figsize=(8, 4))
+        _configure_cjk_font()
+        fig, ax = plt.subplots(figsize=(8, 4))
         if spec.chart_type == ChartType.LINE:
-            plt.plot(df[spec.x_axis], df[spec.y_axis])
+            ax.plot(df[spec.x_axis], df[spec.y_axis])
         else:
-            plt.bar(df[spec.x_axis].astype(str), df[spec.y_axis])
-        plt.title(spec.title or "chart")
-        plt.xlabel(spec.x_axis)
-        plt.ylabel(spec.y_axis)
-        plt.tight_layout()
-        plt.savefig(fig_path)
-        plt.close()
+            labels = df[spec.x_axis].astype(str)
+            ax.bar(labels, df[spec.y_axis])
+            if len(labels) > 6:
+                ax.tick_params(axis="x", rotation=45)
+                for label in ax.get_xticklabels():
+                    label.set_ha("right")
+        ax.set_title(spec.title or "chart")
+        ax.set_xlabel(spec.x_axis)
+        ax.set_ylabel(spec.y_axis)
+        fig.tight_layout()
+        fig.savefig(fig_path, dpi=120)
+        plt.close(fig)
 
     await asyncio.to_thread(_plot)
     return str(fig_path.resolve())

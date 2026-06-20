@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 from app.core.agent.events import emit_tool_end, emit_tool_start
@@ -16,6 +17,13 @@ from app.schemas.structured import ChartArtifact, DataToolStepResult, PendingToo
 
 def _path_tools() -> set[str]:
     return {"data_filter", "sql_execute", "pandas_execute", "make_chart"}
+
+
+def _artifact_preview_from_result(result: dict) -> str:
+    preview = result.get("preview")
+    if preview is None:
+        return ""
+    return json.dumps(preview, ensure_ascii=False)[:2000]
 
 
 async def data_tool_node(state: AgentState, runtime: AgentRuntime) -> dict:
@@ -73,7 +81,12 @@ async def data_tool_node(state: AgentState, runtime: AgentRuntime) -> dict:
                 saved = str(result["path"])
                 desc = str(params.get("artifact_description", params.get("description", tool_name)))
                 catalog_updates[saved] = desc
-                artifact_ref = ProcessedDataRef(path=saved, preview="", mode="tool", source_file=file_path)
+                artifact_ref = ProcessedDataRef(
+                    path=saved,
+                    preview=_artifact_preview_from_result(result),
+                    mode="tool",
+                    source_file=file_path,
+                )
                 log.info("已保存处理结果", path=saved)
             else:
                 log.info("工具调用成功", tool_name=tool_name)

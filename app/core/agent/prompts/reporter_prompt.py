@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from app.core.agent.nodes._helpers import (
     extract_history_context,
     format_report_tool_history,
     report_tool_catalog,
+    summarize_data_tool_steps,
     summarize_plan_steps,
 )
 from app.core.agent.state import AgentRuntime, AgentState
@@ -41,6 +43,32 @@ def _format_meta_hits(meta: list, *, limit: int = 8) -> str:
     if len(meta) > limit:
         lines.append(f"... 共 {len(meta)} 条，仅展示前 {limit} 条")
     return "\n".join(lines)
+
+
+def _format_loaded_data(report_context: dict, *, max_per_file: int = 3500) -> str:
+    loaded_files = report_context.get("loaded_files") or {}
+    if loaded_files:
+        blocks: list[str] = []
+        for path, content in loaded_files.items():
+            name = Path(str(path)).name
+            text = str(content)[:max_per_file]
+            blocks.append(f"#### {name}\n{text}")
+        return "\n\n".join(blocks)
+    loaded = str(report_context.get("loaded_content", "") or "")
+    if loaded:
+        return loaded[:max_per_file]
+    return "（尚未通过 read_data_file 读取中间数据）"
+
+
+def _format_loaded_paths(report_context: dict) -> str:
+    paths = report_context.get("loaded_paths") or []
+    if not paths:
+        single = report_context.get("loaded_path", "")
+        if single:
+            paths = [single]
+    if not paths:
+        return "（无）"
+    return ", ".join(Path(str(p)).name for p in paths)
 
 
 def _format_retrieval_history(state: AgentState) -> str:
@@ -78,6 +106,8 @@ def build_reporter_prompt(
     report_steps = state.get("report_steps") or []
     report_step = state.get("report_step", 0)
     max_report_steps = state.get("max_report_tool_steps", runtime.settings.max_report_tool_steps)
+    data_steps = state.get("data_tool_steps") or []
+    process_result = state.get("process_result") or summarize_data_tool_steps(data_steps)
     report_context = dict(state.get("report_context") or {})
     charts = state.get("chart_artifacts") or []
     data_desc = state.get("data_process_plan", "")
@@ -93,7 +123,9 @@ def build_reporter_prompt(
     doc_text = _format_document_chunks(chunks)
     meta_text = _format_meta_hits(meta)
     retrieval_history = _format_retrieval_history(state)
-    loaded = report_context.get("loaded_content", "")
+    loaded_paths_text = _format_loaded_paths(report_context)
+    loaded_data_text = _format_loaded_data(report_context)
+    process_summary = json.dumps(process_result, ensure_ascii=False)[:1500] if process_result else "（无）"
     report_mode = bool(
         state.get("report_mode") or (state.get("node_flags") and state.get("node_flags").enable_report)
     )
@@ -115,7 +147,11 @@ def build_reporter_prompt(
         f"历史上下文:\n{history_block}\n"
         f"规划结果:{json.dumps(plan_context, ensure_ascii=False)[:800]}\n"
         f"data_process_plan:{data_desc}\n"
+        f"数据处理结果摘要:{process_summary}\n"
         f"中间数据（文件名:描述）:\n{catalog_text}\n"
+        f"已读取文件:{loaded_paths_text}\n"
+        f"已读取数据内容:\n{loaded_data_text}\n"
+        f"结构化元数据命中:\n{meta_text}\n"
         f"文档片段:\n{doc_text}\n"
         f"图表路径:{chart_paths}\n"
         f"工具调用历史({report_step}/{max_report_steps}):\n{history}\n"
@@ -129,10 +165,12 @@ def build_reporter_prompt(
         "2. 若仍需补充知识文本检索，action=retrieve_text 并填写 text_query（可与 data_query 无关，单独检索）；"
         "query 须避免与已检索记录重复，并尽量覆盖尚未命中的文档来源。\n"
         "3. 若需读取中间数据全文，action=call_tool，tool_name=read_data_file，"
-        "params.path 填上方中间数据列表中的文件名（不要猜路径、不要自行加 _processed 后缀）。\n"
-        "4. 信息已足够时 action=done，并填写 answer/report/summary。\n"
-        "5. action 为 retrieve_text、retrieve_data 或 call_tool 时，answer、report、summary 必须均为空字符串。\n"
-        f"6. action 为 done 时：{report_rule}\n"
+        "params.path 填上方中间数据列表中的文件名（不要猜路径、不要自行加 _processed 后缀）；"
+        "每个文件最多读取一次，已读取文件见「已读取文件」，禁止重复 read_data_file。\n"
+        "4. 若「已读取数据内容」与文档片段已足够回答问题，直接 action=done，不要继续 call_tool。\n"
+        "5. 信息已足够时 action=done，并填写 answer/report/summary。\n"
+        "6. action 为 retrieve_text、retrieve_data 或 call_tool 时，answer、report、summary 必须均为空字符串。\n"
+        f"7. action 为 done 时：{report_rule}\n"
         "输出 JSON（不要其它文字）："
         '{"action":"call_tool|retrieve_text|retrieve_data|done","tool_name":"read_data_file",'
         '"params":{},"text_query":"","data_query":"","answer":"","report":"","summary":""}'

@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 from app.config.settings import Settings, get_settings
-from app.core.tools.artifact_utils import save_dataframe_processed
+from app.core.tools.artifact_utils import preview_dataframe_rows, save_dataframe_processed
 from app.core.tools.base_tool import BaseTool
 from app.core.tools.structured_ops import execute_sql_on_file
 
@@ -31,7 +31,7 @@ class SqlExecuteTool(BaseTool):
         "入参：file_path（绝对路径）、sql（SELECT 语句，禁止任何注释 -- 或 /* */）、"
         "artifact_name（必填，保存文件名含后缀，根据描述取名，不与已有中间数据文件名重复）、"
         "artifact_description（必填，产物中文说明，如「某指标汇总表」）。"
-        "返回：path（保存后的绝对路径）。"
+        "返回：path（保存后的绝对路径）、preview（产物前3行）。"
     )
 
     async def run(self, **kwargs: Any) -> dict[str, Any]:
@@ -47,6 +47,6 @@ class SqlExecuteTool(BaseTool):
                 df, file_path, session_id, settings, mode="sql",
                 artifact_name=str(kwargs.get("artifact_name", "")),
             )
-            return {"path": ref.path}
+            return {"path": ref.path, "preview": preview_dataframe_rows(df)}
         except Exception as exc:
             return {"error": str(exc), "error_code": type(exc).__name__}

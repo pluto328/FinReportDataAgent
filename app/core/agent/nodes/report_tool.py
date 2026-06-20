@@ -99,8 +99,18 @@ async def report_tool_node(state: AgentState, runtime: AgentRuntime) -> dict:
     all_steps = [*prior, step]
     report_context = dict(state.get("report_context") or {})
     if isinstance(result, dict) and result.get("content"):
-        report_context["loaded_content"] = str(result["content"])
-        report_context["loaded_path"] = result.get("path", "")
+        path_key = str(result.get("path", ""))
+        content = str(result["content"])
+        loaded_files = dict(report_context.get("loaded_files") or {})
+        loaded_paths = list(report_context.get("loaded_paths") or [])
+        if path_key:
+            loaded_files[path_key] = content
+            if path_key not in loaded_paths:
+                loaded_paths.append(path_key)
+        report_context["loaded_content"] = content
+        report_context["loaded_path"] = path_key
+        report_context["loaded_files"] = loaded_files
+        report_context["loaded_paths"] = loaded_paths
 
     log.end(tool_name=tool_name, step=step_no, success=not error, next_node="reporter")
     return {
