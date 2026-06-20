@@ -19,7 +19,7 @@ from app.core.agent.query_guard import INSUFFICIENT_DATA_MESSAGE
 from app.core.session.history_store import append_session_turn
 from app.core.session.process_artifact_store import get_session_catalog, resolve_catalog_path
 from app.schemas.session import SessionTurnRecord
-from app.schemas.structured import PendingToolCall, ReportArtifact
+from app.schemas.structured import PendingToolCall
 
 
 def _retrieval_insufficient(state: AgentState) -> bool:
@@ -86,7 +86,7 @@ async def _persist_turn(
         turn_id=0,
         question=state.get("user_query", ""),
         answer_summary=answer_summary,
-        report_mode=bool(state.get("report_mode")),
+        report_mode=False,
         markdown_path=markdown_path,
     )
     append_session_turn(record, session_id, runtime.settings)
@@ -103,60 +103,9 @@ async def _finalize_from_parsed(
     charts: list,
     log,
 ) -> dict:
-    report_mode = state.get("report_mode") or (
-        state.get("node_flags") and state.get("node_flags").enable_report
-    )
     summary = parsed.get("summary") or ""
     final_status = state.get("status", "ok")
-    chart_paths = [c.path for c in charts if c.path]
-    refs = list({c.chunk.source_file for c in chunks if c.chunk.source_file})
-    refs += [m.record.file_name for m in meta]
-
-    if report_mode:
-        report_body = parsed.get("report") or ""
-        if not summary:
-            summary = await _fallback_summary(runtime.llm, report_body, state.get("user_query", ""))
-        session_id = state.get("session_id", "default")
-        report_dir = runtime.settings.report_output_path / session_id
-        report_dir.mkdir(parents=True, exist_ok=True)
-        md_path = report_dir / "report.md"
-        lines = [
-            "# 分析报告",
-            "## 分析",
-            report_body,
-            "## 参考文档",
-            *[f"- {r}" for r in refs],
-        ]
-        md_path.write_text("\n\n".join(lines), encoding="utf-8")
-        log.info("Markdown 报告已写入", path=str(md_path))
-        display_answer = report_body.strip() or summary
-        await _persist_turn(
-            state,
-            runtime,
-            answer=display_answer,
-            answer_summary=summary,
-            markdown_path=str(md_path),
-        )
-        artifact = ReportArtifact(
-            session_id=session_id,
-            markdown_path=str(md_path),
-            image_paths=chart_paths,
-            reference_docs=refs,
-            nodes_traversed=state.get("nodes_traversed") or [],
-        )
-        log.end(report_done=True, report_mode=True, markdown_path=str(md_path))
-        return {
-            "final_answer": display_answer,
-            "report_artifact": artifact,
-            "status": final_status,
-            "need_more_retrieval": False,
-            "report_done": True,
-            "pending_tool": None,
-            "report_context": {**summarize_report_steps(report_steps), "answer_summary": summary},
-            **append_node(state, "reporter"),
-        }
-
-    answer = parsed.get("answer") or ""
+    answer = parsed.get("answer") or parsed.get("report") or ""
     if not summary:
         summary = await _fallback_summary(runtime.llm, answer, state.get("user_query", ""))
     await _persist_turn(state, runtime, answer=answer, answer_summary=summary)
@@ -168,7 +117,7 @@ async def _finalize_from_parsed(
         "need_more_retrieval": False,
         "report_done": True,
         "pending_tool": None,
-        "report_context": {"answer_summary": summary},
+        "report_context": {**summarize_report_steps(report_steps), "answer_summary": summary},
         **append_node(state, "reporter"),
     }
 
@@ -228,10 +177,7 @@ async def reporter_node(state: AgentState, runtime: AgentRuntime) -> dict:
         }
 
     force_done = report_step >= max_report_steps or bool(state.get("report_done"))
-    report_mode = bool(
-        state.get("report_mode") or (state.get("node_flags") and state.get("node_flags").enable_report)
-    )
-    stream_field = "report" if report_mode else "answer"
+    stream_field = "answer"
 
     parsed: dict = {}
     action = "done"
@@ -337,7 +283,7 @@ async def reporter_node(state: AgentState, runtime: AgentRuntime) -> dict:
             **append_node(state, "reporter"),
         }
 
-    log.info("生成最终输出", report_mode=bool(state.get("report_mode")))
+    log.info("生成最终输出")
     return await _finalize_from_parsed(
         state,
         runtime,

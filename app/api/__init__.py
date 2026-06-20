@@ -22,13 +22,11 @@ def mount_routes(root: APIRouter | None = None) -> APIRouter:
     target = root or api_router
 
     from app.api.doc_api import router as doc_router
-    from app.api.report_api import router as report_router
     from app.api.search_api import router as search_router
     from app.api.session_api import router as session_router
 
     target.include_router(doc_router, prefix="/documents", tags=["documents"])
     target.include_router(search_router, prefix="/search", tags=["search"])
-    target.include_router(report_router, prefix="/report", tags=["report"])
     target.include_router(session_router, prefix="/session", tags=["session"])
     return target
 

@@ -95,7 +95,7 @@
 
     .settings {
       display: grid;
-      grid-template-columns: 1fr auto;
+      grid-template-columns: 1fr;
       gap: 0.75rem;
       align-items: end;
       padding: 0.75rem 0;
@@ -478,10 +478,6 @@
         API 地址
         <input type="text" id="base" value="http://127.0.0.1:8000" />
       </label>
-      <label class="toggle-row">
-        <input type="checkbox" id="report" />
-        报告模式
-      </label>
     </div>
 
     <div class="error-toast" id="errorToast"></div>
@@ -518,7 +514,6 @@
     const el = {
       base: document.getElementById("base"),
       query: document.getElementById("query"),
-      report: document.getElementById("report"),
       send: document.getElementById("send"),
       chat: document.getElementById("chat"),
       sessionDisplay: document.getElementById("sessionDisplay"),
@@ -703,7 +698,7 @@
         btn.addEventListener("click", async (e) => {
           e.stopPropagation();
           try {
-            await saveReportToDisk(btn.dataset.url, btn.dataset.fname || "chart.png");
+            await downloadAsset(btn.dataset.url, btn.dataset.fname || "chart.png");
           } catch (err) {
             showError(err.message || "下载失败");
           }
@@ -711,17 +706,7 @@
       });
     }
 
-    function reportActionsHtml(meta) {
-      if (!meta || !meta.report_url) return "";
-      const base = el.base.value.replace(/\/$/, "");
-      const href = base + meta.report_url;
-      const fname = "report_" + (sessionId || "export").slice(0, 8) + ".md";
-      return `
-        <button type="button" class="btn btn-sm btn-ghost report-open" data-url="${escapeHtml(href)}">打开报告</button>
-        <button type="button" class="btn btn-sm btn-primary report-save" data-url="${escapeHtml(href)}" data-fname="${escapeHtml(fname)}">下载到本地</button>`;
-    }
-
-    async function saveReportToDisk(url, filename) {
+    async function downloadAsset(url, filename) {
       const res = await fetch(url);
       if (!res.ok) throw new Error("下载失败 " + res.status);
       const blob = await res.blob();
@@ -765,7 +750,6 @@
           chartsHtml = renderChartsHtml(m.charts, m.session_id || sessionId);
         }
         metaHtml += `<span class="tag ${statusTagClass(m.status)}">${escapeHtml(m.status || "ok")}</span>`;
-        metaHtml += reportActionsHtml(m);
         if (m.retrieval) body += renderRetrieval(m.retrieval);
       }
 
@@ -788,7 +772,7 @@
     }
 
     function phaseLabel(phase) {
-      const map = { planner: "规划", data_processor: "数据处理", reporter: "报告" };
+      const map = { planner: "规划", data_processor: "数据处理", reporter: "回答" };
       return map[phase] || phase || "Agent";
     }
 
@@ -1053,24 +1037,6 @@
         });
       });
 
-      el.chat.querySelectorAll(".report-open").forEach((btn) => {
-        btn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          window.open(btn.dataset.url, "_blank", "noopener");
-        });
-      });
-
-      el.chat.querySelectorAll(".report-save").forEach((btn) => {
-        btn.addEventListener("click", async (e) => {
-          e.stopPropagation();
-          try {
-            await saveReportToDisk(btn.dataset.url, btn.dataset.fname);
-          } catch (err) {
-            showError(err.message || String(err));
-          }
-        });
-      });
-
       bindChartActions(el.chat);
 
       scrollChatToBottom();
@@ -1120,8 +1086,7 @@
       ensureSession();
 
       const base = el.base.value.replace(/\/$/, "");
-      const reportMode = el.report.checked;
-      const path = reportMode ? "/report/stream" : "/search/stream";
+      const path = "/search/stream";
 
       const historyPayload = chatHistory.map(({ role, content }) => ({ role, content }));
 
@@ -1152,7 +1117,6 @@
             query,
             session_id: sessionId,
             chat_history: historyPayload,
-            report_mode: reportMode,
             new_session: pendingNewSession,
           }),
         });
@@ -1191,7 +1155,6 @@
           meta: {
             status: data.status,
             session_id: sessionId,
-            report_url: data.report_url || "",
             charts: data.chart_artifacts || [],
             retrieval: {
               knowledge_chunks: data.knowledge_chunks,

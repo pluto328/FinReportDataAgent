@@ -48,11 +48,6 @@ def _build_initial_state(request: SearchRequest) -> AgentState:
 
 
 def _final_to_response(final: AgentState, request: SearchRequest) -> SearchResponse:
-    artifact = final.get("report_artifact")
-    report_url = ""
-    if artifact and artifact.markdown_path:
-        sid = artifact.session_id
-        report_url = f"/report/{sid}/download"
     charts = final.get("chart_artifacts") or []
     chart_paths = [c.path if hasattr(c, "path") else str(c) for c in charts]
     answer = final.get("final_answer", "")
@@ -61,7 +56,6 @@ def _final_to_response(final: AgentState, request: SearchRequest) -> SearchRespo
         message=answer,
         session_id=final.get("session_id", request.session_id),
         status=final.get("status", "ok"),
-        report_url=report_url,
         knowledge_chunks=final.get("knowledge_chunks") or [],
         meta_hits=final.get("meta_hits") or [],
         chart_artifacts=chart_paths,
@@ -75,7 +69,6 @@ def _response_to_done_payload(response: SearchResponse) -> dict[str, Any]:
         "message": response.message,
         "session_id": response.session_id,
         "status": response.status,
-        "report_url": response.report_url,
         "knowledge_chunks": [c.model_dump() for c in response.knowledge_chunks],
         "meta_hits": [m.model_dump() for m in response.meta_hits],
         "chart_artifacts": response.chart_artifacts,

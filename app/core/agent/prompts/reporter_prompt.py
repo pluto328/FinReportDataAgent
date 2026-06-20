@@ -126,54 +126,36 @@ def build_reporter_prompt(
     loaded_paths_text = _format_loaded_paths(report_context)
     loaded_data_text = _format_loaded_data(report_context)
     process_summary = json.dumps(process_result, ensure_ascii=False)[:1500] if process_result else "（无）"
-    report_mode = bool(
-        state.get("report_mode") or (state.get("node_flags") and state.get("node_flags").enable_report)
-    )
 
     force_line = ""
     if force_done:
-        force_line = f"已达最大工具步数({max_report_steps})，必须 action=done 并输出最终 answer/report/summary。\n"
-
-    report_rule = (
-        "report_mode=true：report 填 Markdown 报告正文（禁止插入图表图片或 ![...](路径)），summary 填 2-3 句摘要；"
-        "图表由前端单独展示，仅可在正文中文字描述图表结论。"
-        if report_mode
-        else "report_mode=false：answer 填回答正文，report 留空，summary 填 2-3 句摘要。"
-    )
+        force_line = f"已达最大工具步数({max_report_steps})，必须 action=done 并输出最终 answer 与 summary。\n"
 
     return (
         f"问题:{state.get('user_query', '')}\n"
-        f"report_mode:{report_mode}\n"
-        f"历史上下文:\n{history_block}\n"
         f"规划结果:{json.dumps(plan_context, ensure_ascii=False)[:800]}\n"
-        f"data_process_plan:{data_desc}\n"
         f"数据处理结果摘要:{process_summary}\n"
         f"中间数据（文件名:描述）:\n{catalog_text}\n"
         f"已读取文件:{loaded_paths_text}\n"
         f"已读取数据内容:\n{loaded_data_text}\n"
-        f"结构化元数据命中:\n{meta_text}\n"
         f"文档片段:\n{doc_text}\n"
-        f"图表路径:{chart_paths}\n"
-        f"工具调用历史({report_step}/{max_report_steps}):\n{history}\n"
         f"可用 report 工具:\n{tool_catalog}\n"
         f"已检索记录（补充检索时须避免重复 query 与已命中来源）:\n{retrieval_history}\n"
         f"{force_line}"
-        "请根据问题、data_process_plan 与上述上下文决定下一步，并按要求填写 JSON 各字段。\n"
+        "请根据问题需求解决情况和可用中间数据路径、已读取数据内容和以下规则填写 JSON 各字段。\n"
         "规则：\n"
-        "1. 若仍需补充结构化数据检索，action=retrieve_data 并填写 data_query（可与 text_query 无关，单独检索）；"
+        "1. 若仍需补充结构化数据检索，action=retrieve_data 并填写 data_query；"
         "query 须与已检索记录中的 query 不同，且应换角度/换关键词以获取未命中的数据。\n"
-        "2. 若仍需补充知识文本检索，action=retrieve_text 并填写 text_query（可与 data_query 无关，单独检索）；"
+        "2. 若仍需补充知识文本检索，action=retrieve_text 并填写 text_query；"
         "query 须避免与已检索记录重复，并尽量覆盖尚未命中的文档来源。\n"
-        "3. 若需读取中间数据全文，action=call_tool，tool_name=read_data_file，"
-        "params.path 填上方中间数据列表中的文件名（不要猜路径、不要自行加 _processed 后缀）；"
-        "每个文件最多读取一次，已读取文件见「已读取文件」，禁止重复 read_data_file。\n"
+        "3. 若需读取某中间数据且未读取过，action=call_tool，tool_name=read_data_file，params.path 填中间数据文件名；"     
         "4. 若「已读取数据内容」与文档片段已足够回答问题，直接 action=done，不要继续 call_tool。\n"
-        "5. 信息已足够时 action=done，并填写 answer/report/summary。\n"
-        "6. action 为 retrieve_text、retrieve_data 或 call_tool 时，answer、report、summary 必须均为空字符串。\n"
-        f"7. action 为 done 时：{report_rule}\n"
+        "5. 信息已足够时 action=done，并填写 answer 与 summary。\n"
+        "6. action 为 retrieve_text、retrieve_data 或 call_tool 时，answer、summary 必须均为空字符串。\n"
+        "7. action 为 done 时：根据用户提问、已处理数据给出专业金融分析建议，并作适当拓展，填入 answer；summary 填 2-3 句摘要。\n"
         "输出 JSON（不要其它文字）："
         '{"action":"call_tool|retrieve_text|retrieve_data|done","tool_name":"read_data_file",'
-        '"params":{},"text_query":"","data_query":"","answer":"","report":"","summary":""}'
+        '"params":{},"text_query":"","data_query":"","answer":"","summary":""}'
     )
 
 
@@ -211,7 +193,6 @@ def parse_reporter_response(raw: str) -> dict:
 
     if action in ("retrieve_text", "retrieve_data", "call_tool"):
         answer = ""
-        report = ""
         summary = ""
 
     if action == "retrieve_text" and not text_q:

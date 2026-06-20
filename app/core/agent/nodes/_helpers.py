@@ -190,7 +190,7 @@ def apply_plan_flags(
         enable_data_retrieve=bool(data.get("enable_data_retrieve", False)),
         enable_process=bool(data.get("enable_process", False)),
         enable_chart=bool(data.get("enable_chart", False)),
-        enable_report=bool(data.get("enable_report", report_mode)),
+        enable_report=False,
     )
     description = str(
         data.get("data_process_plan", "")
