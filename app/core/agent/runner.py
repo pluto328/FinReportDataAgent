@@ -56,12 +56,9 @@ def _final_to_response(final: AgentState, request: SearchRequest) -> SearchRespo
     charts = final.get("chart_artifacts") or []
     chart_paths = [c.path if hasattr(c, "path") else str(c) for c in charts]
     answer = final.get("final_answer", "")
-    message = ""
-    if request.report_mode and artifact:
-        message = "详见报告"
     return SearchResponse(
         answer=answer,
-        message=message,
+        message=answer,
         session_id=final.get("session_id", request.session_id),
         status=final.get("status", "ok"),
         report_url=report_url,

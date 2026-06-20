@@ -356,16 +356,36 @@
 
     .charts {
       display: flex;
-      flex-wrap: wrap;
-      gap: 0.5rem;
-      margin-top: 0.65rem;
+      flex-direction: column;
+      gap: 0.65rem;
+      margin-top: 0.5rem;
     }
 
-    .charts img {
-      max-width: 100%;
-      max-height: 220px;
-      border-radius: 8px;
+    .chart-card {
       border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.5rem;
+      background: var(--surface);
+    }
+
+    .chart-card img {
+      max-width: 100%;
+      max-height: 280px;
+      border-radius: 6px;
+      display: block;
+    }
+
+    .chart-card-title {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-bottom: 0.35rem;
+    }
+
+    .chart-actions {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 0.4rem;
+      flex-wrap: wrap;
     }
 
     details.retrieval {
@@ -618,19 +638,77 @@
       return html;
     }
 
-    function renderCharts(paths) {
+    function chartFileName(path) {
+      return String(path || "").replace(/\\/g, "/").split("/").pop() || "chart";
+    }
+
+    function chartServeUrl(path, sid) {
+      const base = el.base.value.replace(/\/$/, "");
+      const name = chartFileName(path);
+      return base + "/session/" + encodeURIComponent(sid || sessionId) + "/files/" + encodeURIComponent(name);
+    }
+
+    function isImageChartPath(path) {
+      const lower = String(path).toLowerCase();
+      return lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".webp") || lower.endsWith(".gif");
+    }
+
+    function renderChartsHtml(paths, sid) {
       if (!paths || !paths.length) return "";
       let html = '<div class="charts">';
       paths.forEach((p) => {
-        const lower = String(p).toLowerCase();
-        if (lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".webp")) {
-          html += `<img src="${escapeHtml(p)}" alt="chart" onerror="this.style.display='none'" />`;
+        const fname = chartFileName(p);
+        const url = chartServeUrl(p, sid);
+        const isImg = isImageChartPath(p);
+        html += `<div class="chart-card"><div class="chart-card-title">${escapeHtml(fname)}</div>`;
+        if (isImg) {
+          html += `<img src="${escapeHtml(url)}" alt="${escapeHtml(fname)}" loading="lazy" />`;
         } else {
-          html += `<span class="tag">${escapeHtml(p.split(/[/\\]/).pop() || p)}</span>`;
+          html += `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(fname)}</a>`;
         }
+        html += `<div class="chart-actions">`;
+        html += `<button type="button" class="btn btn-sm btn-ghost chart-copy" data-url="${escapeHtml(url)}" data-image="${isImg ? "1" : "0"}">复制</button>`;
+        html += `<button type="button" class="btn btn-sm btn-primary chart-download" data-url="${escapeHtml(url)}" data-fname="${escapeHtml(fname)}">下载</button>`;
+        html += `</div></div>`;
       });
       html += "</div>";
       return html;
+    }
+
+    async function copyChartAsset(url, isImage) {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("复制失败 " + res.status);
+      const blob = await res.blob();
+      if (isImage && navigator.clipboard && window.ClipboardItem) {
+        await navigator.clipboard.write([new ClipboardItem({ [blob.type || "image/png"]: blob })]);
+      } else {
+        await navigator.clipboard.writeText(await blob.text());
+      }
+    }
+
+    function bindChartActions(root) {
+      if (!root) return;
+      root.querySelectorAll(".chart-copy").forEach((btn) => {
+        btn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          try {
+            await copyChartAsset(btn.dataset.url, btn.dataset.image === "1");
+            showHint("已复制到剪贴板");
+          } catch (err) {
+            showError(err.message || "复制失败");
+          }
+        });
+      });
+      root.querySelectorAll(".chart-download").forEach((btn) => {
+        btn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          try {
+            await saveReportToDisk(btn.dataset.url, btn.dataset.fname || "chart.png");
+          } catch (err) {
+            showError(err.message || "下载失败");
+          }
+        });
+      });
     }
 
     function reportActionsHtml(meta) {
@@ -674,6 +752,7 @@
 
       let body = escapeHtml(item.content);
       let progressHtml = "";
+      let chartsHtml = "";
       let metaHtml = "";
 
       if (!isUser && item.meta) {
@@ -682,9 +761,11 @@
         if (progressText) {
           progressHtml = `<div class="progress-text">${escapeHtml(progressText)}</div>`;
         }
+        if (m.charts && m.charts.length) {
+          chartsHtml = renderChartsHtml(m.charts, m.session_id || sessionId);
+        }
         metaHtml += `<span class="tag ${statusTagClass(m.status)}">${escapeHtml(m.status || "ok")}</span>`;
         metaHtml += reportActionsHtml(m);
-        if (m.charts && m.charts.length) body += renderCharts(m.charts);
         if (m.retrieval) body += renderRetrieval(m.retrieval);
       }
 
@@ -697,6 +778,7 @@
         <div class="msg-role">${isUser ? "你" : "助手"}</div>
         ${progressHtml}
         <div class="msg-bubble answer-only" title="${escapeHtml(actionHint)}">${body}</div>
+        ${chartsHtml}
         <div class="msg-actions">
           <button type="button" class="msg-action" data-action="${isUser ? "reask" : "branch"}" data-index="${index}">${actionLabel}</button>
         </div>
@@ -722,9 +804,10 @@
             <span id="streamProgressWaitingText"></span><span class="progress-waiting-dots">......</span>
           </span>
         </div>
-        <div class="msg-bubble answer-only">
+        <div class="msg-bubble answer-only" id="streamAnswerBubble" style="display:none">
           <div class="answer-stream" id="streamAnswer"></div>
-        </div>`;
+        </div>
+        <div id="streamCharts"></div>`;
       return div;
     }
 
@@ -736,6 +819,24 @@
         scrollChatToBottom();
       }
       return bubble;
+    }
+
+    function showAnswerBubble() {
+      const bubble = document.getElementById("streamAnswerBubble");
+      if (bubble) bubble.style.display = "block";
+    }
+
+    function renderStreamCharts(paths) {
+      const wrap = document.getElementById("streamCharts");
+      if (!wrap || !paths || !paths.length) return;
+      wrap.innerHTML = renderChartsHtml(paths, sessionId);
+      bindChartActions(wrap);
+    }
+
+    function endLlmConnecting(streamState) {
+      if (!streamState.llmConnecting) return;
+      streamState.llmConnecting = false;
+      setProgressWaiting("", false, streamState);
     }
 
     function updateProgressDisplay(streamState) {
@@ -790,12 +891,14 @@
         case "node_start":
           break;
         case "planning_start":
+          endLlmConnecting(streamState);
           streamState.progressText = "";
           streamState.planningThought = "";
           updateProgressDisplay(streamState);
           break;
         case "planning_delta":
         case "progress_delta":
+          endLlmConnecting(streamState);
           appendProgressDelta(ev.text || "", streamState);
           if (ev.type === "planning_delta") {
             streamState.planningThought = (streamState.planningThought || "") + (ev.text || "");
@@ -831,8 +934,12 @@
           if (ev.label) appendProgressLine((ev.ok ? "✓ " : "✗ ") + ev.label, streamState);
           break;
         case "answer_start":
+          endLlmConnecting(streamState);
+          showAnswerBubble();
           break;
         case "answer_delta": {
+          endLlmConnecting(streamState);
+          showAnswerBubble();
           const answerEl = document.getElementById("streamAnswer");
           if (answerEl) {
             streamState.answer = (streamState.answer || "") + (ev.text || "");
@@ -964,6 +1071,8 @@
         });
       });
 
+      bindChartActions(el.chat);
+
       scrollChatToBottom();
     }
 
@@ -1029,7 +1138,11 @@
         planningThought: "",
         waitingActive: false,
         waitingText: "",
+        llmConnecting: true,
       };
+
+      ensureStreamingBubble();
+      setProgressWaiting("大模型连接中", true, streamState);
 
       try {
         const res = await fetch(base + path, {
@@ -1065,10 +1178,10 @@
           el.sessionDisplay.title = sessionId;
         }
 
-        let answerText = streamState.answer || data.answer || data.message || "（无内容）";
-        if (reportMode && data.report_url) {
-          answerText = data.message || answerText || "报告已生成，可点击下方按钮打开或下载。";
-        }
+        endLlmConnecting(streamState);
+        const answerText = streamState.answer || data.answer || data.message || "（无内容）";
+        if (answerText && !streamState.answer) showAnswerBubble();
+        renderStreamCharts(data.chart_artifacts || []);
 
         setProgressWaiting("", false, streamState);
 
@@ -1077,6 +1190,7 @@
           content: answerText,
           meta: {
             status: data.status,
+            session_id: sessionId,
             report_url: data.report_url || "",
             charts: data.chart_artifacts || [],
             retrieval: {

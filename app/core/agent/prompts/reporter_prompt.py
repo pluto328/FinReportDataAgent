@@ -103,7 +103,8 @@ def build_reporter_prompt(
         force_line = f"已达最大工具步数({max_report_steps})，必须 action=done 并输出最终 answer/report/summary。\n"
 
     report_rule = (
-        'report_mode=true：answer 固定填 "详见报告"，report 填 Markdown 报告正文（可插入 ![描述](图表路径)），summary 填 2-3 句摘要。'
+        "report_mode=true：report 填 Markdown 报告正文（禁止插入图表图片或 ![...](路径)），summary 填 2-3 句摘要；"
+        "图表由前端单独展示，仅可在正文中文字描述图表结论。"
         if report_mode
         else "report_mode=false：answer 填回答正文，report 留空，summary 填 2-3 句摘要。"
     )

@@ -120,11 +120,6 @@ async def _finalize_from_parsed(
         report_dir = runtime.settings.report_output_path / session_id
         report_dir.mkdir(parents=True, exist_ok=True)
         md_path = report_dir / "report.md"
-        chart_md = []
-        for c in charts:
-            if c.path:
-                label = c.description or c.title or "chart"
-                chart_md.append(f"![{label}]({c.path})")
         lines = [
             "# 分析报告",
             "## 分析",
@@ -132,14 +127,13 @@ async def _finalize_from_parsed(
             "## 参考文档",
             *[f"- {r}" for r in refs],
         ]
-        if chart_md:
-            lines.extend(["## 图表", *chart_md])
         md_path.write_text("\n\n".join(lines), encoding="utf-8")
         log.info("Markdown 报告已写入", path=str(md_path))
+        display_answer = report_body.strip() or summary
         await _persist_turn(
             state,
             runtime,
-            answer="详见报告",
+            answer=display_answer,
             answer_summary=summary,
             markdown_path=str(md_path),
         )
@@ -152,7 +146,7 @@ async def _finalize_from_parsed(
         )
         log.end(report_done=True, report_mode=True, markdown_path=str(md_path))
         return {
-            "final_answer": "详见报告",
+            "final_answer": display_answer,
             "report_artifact": artifact,
             "status": final_status,
             "need_more_retrieval": False,
@@ -235,12 +229,16 @@ async def reporter_node(state: AgentState, runtime: AgentRuntime) -> dict:
 
     force_done = report_step >= max_report_steps or bool(state.get("report_done"))
     prompt = build_reporter_prompt(state, runtime, force_done=force_done)
-    log.debug("调用 LLM", report_step=report_step, force_done=force_done)
+    report_mode = bool(
+        state.get("report_mode") or (state.get("node_flags") and state.get("node_flags").enable_report)
+    )
+    stream_field = "report" if report_mode else "answer"
+    log.debug("调用 LLM", report_step=report_step, force_done=force_done, stream_field=stream_field)
     raw = await invoke_llm_decision(
         runtime.llm,
         prompt,
         phase="reporter",
-        stream_field="answer",
+        stream_field=stream_field,
         stream_as="answer",
         emit_thinking=False,
     )
