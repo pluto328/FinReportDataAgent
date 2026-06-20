@@ -95,7 +95,75 @@ def reset_session_workspace(session_id: str, settings: Settings | None = None) -
 def format_intermediate_catalog(catalog: dict[str, str]) -> str:
     if not catalog:
         return "（暂无中间数据）"
-    return "\n".join(f"- {path}: {desc}" for path, desc in catalog.items())
+    return "\n".join(f"- {Path(path).name}: {desc}" for path, desc in catalog.items())
+
+
+def format_intermediate_catalog_for_agent(catalog: dict[str, str]) -> str:
+    """Catalog for LLM prompts: filename + hint for read_data_file."""
+    if not catalog:
+        return "（暂无中间数据）"
+    lines: list[str] = []
+    for path, desc in catalog.items():
+        name = Path(path).name
+        lines.append(
+            f"- {name}（read_data_file 时 params.path 填「{name}」）: {desc}"
+        )
+    return "\n".join(lines)
+
+
+def _basename_variants(name: str) -> list[str]:
+    base = Path(name).name
+    variants = [base]
+    if "_processed_processed" in base:
+        variants.append(base.replace("_processed_processed", "_processed"))
+    stem = Path(base).stem
+    if stem.endswith("_processed"):
+        variants.append(stem[: -len("_processed")] + Path(base).suffix)
+    return list(dict.fromkeys(v for v in variants if v))
+
+
+def resolve_catalog_path(
+    session_id: str,
+    path_or_name: str,
+    settings: Settings | None = None,
+    *,
+    extra_paths: list[str] | None = None,
+) -> str:
+    """Resolve filename or partial path to an existing absolute file path."""
+    raw = (path_or_name or "").strip()
+    if not raw:
+        return ""
+
+    candidate = Path(raw)
+    if candidate.is_file():
+        return str(candidate.resolve())
+
+    catalog = get_session_catalog(session_id, settings)
+    search_pool: list[str] = list(catalog.keys())
+    if extra_paths:
+        search_pool.extend(str(p) for p in extra_paths if p)
+
+    if raw in search_pool:
+        p = Path(raw)
+        if p.is_file():
+            return str(p.resolve())
+
+    by_name: dict[str, str] = {}
+    for item in search_pool:
+        by_name.setdefault(Path(item).name, item)
+
+    for variant in _basename_variants(raw):
+        hit = by_name.get(variant)
+        if hit and Path(hit).is_file():
+            return str(Path(hit).resolve())
+
+    proc_dir = processed_dir(session_id, settings)
+    for variant in _basename_variants(raw):
+        proc_hit = proc_dir / variant
+        if proc_hit.is_file():
+            return str(proc_hit.resolve())
+
+    return ""
 
 
 def clear_session_workspace(session_id: str, settings: Settings | None = None) -> None:

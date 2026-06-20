@@ -11,8 +11,8 @@ from app.core.tools.base_tool import BaseTool
 class ReadDataFileTool(BaseTool):
     name = "read_data_file"
     description = (
-        "读取数据文件的全部内容。"
-        "入参：path。"
+        "读取会话中间数据或检索到的数据文件全文。"
+        "入参：path（填 catalog 中的文件名，如 liability_top5.csv；系统自动解析为绝对路径）。"
         "返回：content。"
     )
 

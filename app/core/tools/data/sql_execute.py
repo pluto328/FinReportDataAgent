@@ -27,8 +27,9 @@ def _sanitize_sql(sql: str) -> str:
 class SqlExecuteTool(BaseTool):
     name = "sql_execute"
     description = (
-        "对结构化文件执行只读 SELECT（DuckDB），结果保存为 _processed 加原后缀的文件。"
+        "对结构化文件执行只读 SELECT（DuckDB），结果保存为新文件。"
         "入参：file_path（绝对路径）、sql（SELECT 语句，禁止任何注释 -- 或 /* */）、"
+        "artifact_name（必填，保存文件名含后缀，根据描述取名，不与已有中间数据文件名重复）、"
         "artifact_description（必填，产物中文说明，如「某指标汇总表」）。"
         "返回：path（保存后的绝对路径）。"
     )
@@ -42,7 +43,10 @@ class SqlExecuteTool(BaseTool):
             return {"error": "sql is empty after sanitization", "error_code": "empty_sql"}
         try:
             df = execute_sql_on_file(file_path, sql)
-            ref = save_dataframe_processed(df, file_path, session_id, settings, mode="sql")
+            ref = save_dataframe_processed(
+                df, file_path, session_id, settings, mode="sql",
+                artifact_name=str(kwargs.get("artifact_name", "")),
+            )
             return {"path": ref.path}
         except Exception as exc:
             return {"error": str(exc), "error_code": type(exc).__name__}

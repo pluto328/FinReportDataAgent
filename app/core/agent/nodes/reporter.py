@@ -17,7 +17,7 @@ from app.core.agent.prompts.reporter_prompt import build_reporter_prompt, parse_
 from app.core.agent.state import AgentRuntime, AgentState
 from app.core.agent.query_guard import INSUFFICIENT_DATA_MESSAGE
 from app.core.session.history_store import append_session_turn
-from app.core.session.process_artifact_store import get_session_catalog
+from app.core.session.process_artifact_store import get_session_catalog, resolve_catalog_path
 from app.schemas.session import SessionTurnRecord
 from app.schemas.structured import PendingToolCall, ReportArtifact
 
@@ -236,7 +236,14 @@ async def reporter_node(state: AgentState, runtime: AgentRuntime) -> dict:
     force_done = report_step >= max_report_steps or bool(state.get("report_done"))
     prompt = build_reporter_prompt(state, runtime, force_done=force_done)
     log.debug("调用 LLM", report_step=report_step, force_done=force_done)
-    raw = await invoke_llm_decision(runtime.llm, prompt, phase="reporter")
+    raw = await invoke_llm_decision(
+        runtime.llm,
+        prompt,
+        phase="reporter",
+        stream_field="answer",
+        stream_as="answer",
+        emit_thinking=False,
+    )
     parsed = parse_reporter_response(raw)
     action = parsed["action"]
     tool_name = parsed["tool_name"]
@@ -276,10 +283,20 @@ async def reporter_node(state: AgentState, runtime: AgentRuntime) -> dict:
         }
 
     if not force_done and action == "call_tool" and tool_name:
-        if tool_name == "read_data_file" and not params.get("path"):
-            catalog = get_session_catalog(state.get("session_id", ""), runtime.settings)
-            if catalog:
-                params["path"] = next(iter(catalog))
+        if tool_name == "read_data_file":
+            session_id = state.get("session_id", "")
+            extra_paths = list(state.get("data_file_paths") or [])
+            extra_paths.extend(state.get("processed_data_refs") or [])
+            raw_path = str(params.get("path", ""))
+            resolved = resolve_catalog_path(
+                session_id, raw_path, runtime.settings, extra_paths=extra_paths
+            )
+            if resolved:
+                params["path"] = resolved
+            elif not raw_path:
+                catalog = get_session_catalog(session_id, runtime.settings)
+                if catalog:
+                    params["path"] = next(iter(catalog))
         log.info("触发 report tool 调用", tool_name=tool_name, params=params)
         log.end(report_done=False, next_node="report_tool", tool_name=tool_name)
         return {

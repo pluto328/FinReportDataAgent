@@ -11,7 +11,7 @@ from app.core.agent.nodes._helpers import (
 )
 from app.core.agent.prompts.planner_domain_knowledge import PLANNER_DOMAIN_KNOWLEDGE
 from app.core.agent.state import AgentRuntime, AgentState
-from app.core.session.process_artifact_store import format_intermediate_catalog, get_session_catalog
+from app.core.session.process_artifact_store import format_intermediate_catalog_for_agent, get_session_catalog
 
 
 def _entry_validation_rules(has_history: bool) -> str:
@@ -40,7 +40,7 @@ def build_planner_prompt(state: AgentState, runtime: AgentRuntime) -> str:
 
     plan_history = format_plan_history(plan_steps)
     session_id = state.get("session_id", "")
-    catalog_text = format_intermediate_catalog(
+    catalog_text = format_intermediate_catalog_for_agent(
         get_session_catalog(session_id, runtime.settings)
     )
 
@@ -52,7 +52,7 @@ def build_planner_prompt(state: AgentState, runtime: AgentRuntime) -> str:
         else '"action":"call_tool|done",'
     )
     entry_rules = _entry_validation_rules(has_history) if is_entry_pass else ""
-    operation_rules ="""若会话历史数据（路径:描述）已包含所需中间结果，可跳过数据检索与数据处理，直接图表生成或报告生成。
+    operation_rules ="""若会话历史数据（文件名:描述）已包含所需中间结果，可跳过数据检索与数据处理，直接图表生成或报告生成。
     若涉及数据计算且历史数据不包含所需数据，则进行数据检索，
     若需要阅读相关报告才能得出结论，则进行知识检索，
     若所得结果涉及对比、排名、趋势、且数据量有限且适合用二维图表示则进行图表生成。
@@ -64,19 +64,21 @@ def build_planner_prompt(state: AgentState, runtime: AgentRuntime) -> str:
         "你需要：1.判断用户问题是否有效，规则为"
         f"{entry_rules}"
         "2.判断问题含有刚才/之前/继续/上述/同样等追问上文时，调用工具load_history_context。action = call_tool。否则action = done。"
-        "3.分析问题，有历史内容时结合历史问题分析，判断具体需求，确定以下操作是否进行:知识检索、数据检索、数据处理、图表生成、报告生成。并填写enable_*，填true或false。规则为"
+        "3.填写 planning_thought（JSON 第一个字段）：用 1-3 句中文描述规划思路，句式以「用户让我…」或「用户想咨询…」开头，"
+        "接着写「我需要先…再…」（可继续「然后…」）；只写思路，不要写 JSON 字段名或 action 枚举。"
+        "4.分析问题，有历史内容时结合历史问题分析，判断具体需求，确定以下操作是否进行:知识检索、数据检索、数据处理、图表生成、报告生成。并填写enable_*，填true或false。规则为"
         f"{operation_rules}\n"
-        "4.如果需要进行文本检索，提取需求，扩写，尽量检索出更多有效信息，并填写text_query。\n"
-        "5.如果需要数据处理，分点标号、列出处理步骤，大致描述为取数据、数据处理、数据计算、保存结果、是否画图。填写data_process_plan。\n"
-        "6.根据数据处理要求填写data_query,要求使其尽量精准检索到相关数据文件"
-        "仅输出 JSON，不要输出任何其他内容：\n"
-        "{" + reject_schema +
+        "5.如果需要进行文本检索，提取需求，扩写，尽量检索出更多有效信息，并填写text_query。\n"
+        "6.如果需要数据处理，分点标号、列出处理步骤，大致描述为取数据、数据处理、数据计算、保存结果、是否画图。填写data_process_plan。\n"
+        "7.根据数据处理要求填写data_query,要求使其尽量精准检索到相关数据文件"
+        "仅输出 JSON，不要输出任何其他内容（planning_thought 必须是第一个字段）：\n"
+        '{"planning_thought":"",' + reject_schema +
         '"text_query":"","data_query":"","data_process_plan":"",'
         '"enable_knowledge_retrieve":false,"enable_data_retrieve":false,'
         '"enable_process":false,"enable_chart":false,"enable_report":false}\n'
         f"已调用plantool：({plan_step}/{max_steps}):\n{plan_history}\n"
         f"已加载历史上下文:\n{loaded_hint}\n"
-        f"会话历史数据（路径:描述）:\n{catalog_text}\n"
+        f"会话历史数据（文件名:描述）:\n{catalog_text}\n"
         "规划时可参考以下常识理解用户问题：\n"
         f"{PLANNER_DOMAIN_KNOWLEDGE}\n"
     )

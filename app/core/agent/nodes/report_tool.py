@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 from app.core.agent.events import emit_tool_end, emit_tool_start
 from app.core.agent.nodes._debug_runtime import print_node_result, sample_state, stub_runtime
 from app.core.agent.nodes._helpers import append_node, summarize_report_steps
 from app.core.agent.nodes._node_log import node_logger
 from app.core.agent.state import AgentRuntime, AgentState
+from app.core.session.process_artifact_store import get_session_catalog, resolve_catalog_path
 from app.schemas.structured import PendingToolCall, ReportStepResult
 
 
@@ -24,6 +26,43 @@ async def report_tool_node(state: AgentState, runtime: AgentRuntime) -> dict:
     step_no = state.get("report_step", 0) + 1
     params = dict(pending.params)
     tool_name = pending.tool_name
+    session_id = state.get("session_id", "")
+
+    if tool_name == "read_data_file":
+        extra_paths = list(state.get("data_file_paths") or [])
+        extra_paths.extend(state.get("processed_data_refs") or [])
+        raw_path = str(params.get("path", ""))
+        resolved = resolve_catalog_path(
+            session_id, raw_path, runtime.settings, extra_paths=extra_paths
+        )
+        if resolved:
+            params["path"] = resolved
+        elif raw_path:
+            catalog = get_session_catalog(session_id, runtime.settings)
+            names = [Path(p).name for p in catalog] if catalog else []
+            extra_names = [Path(p).name for p in extra_paths if p]
+            available = ", ".join(dict.fromkeys(names + extra_names)) or "（无）"
+            error = f"文件未找到: {raw_path}；可用文件: {available}"
+            log.start(tool_name=tool_name, step=step_no, params=params)
+            log.fail("report tool 路径解析失败", path=raw_path, available=available)
+            await emit_tool_start("report", tool_name)
+            await emit_tool_end("report", tool_name, ok=False, error=error)
+            step = ReportStepResult(
+                step=step_no,
+                tool_name=tool_name,
+                params=params,
+                result={"ok": False, "error": error},
+                error=error,
+            )
+            log.end(tool_name=tool_name, step=step_no, success=False, next_node="reporter")
+            return {
+                "report_steps": [step],
+                "report_step": step_no,
+                "report_done": False,
+                "pending_tool": None,
+                **append_node(state, "report_tool"),
+            }
+
     log.start(tool_name=tool_name, step=step_no, params=params)
     log.info("触发 report tool 调用", tool_name=tool_name)
     await emit_tool_start("report", tool_name)

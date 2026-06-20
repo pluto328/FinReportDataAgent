@@ -354,6 +354,7 @@ Knowledge_Rag_System_Agent/
 | Agent     | LangGraph + LangChain          | 0.2.27 / 0.2.10  |
 | 检索        | Elasticsearch + ChromaDB       | 8.13.0 / 0.5.4   |
 | Embedding | sentence-transformers + bge-m3 | 3.3.1            |
+| 深度学习运行时   | PyTorch（CPU，Embedding/Rerank 依赖） | >=2.6.0          |
 | 结构化       | pandas + duckdb                | 2.2.3 / 1.1.3    |
 | 图表        | matplotlib                     | 3.9.4            |
 
@@ -435,7 +436,9 @@ poetry run python scripts/monitor.py
 | type                                                 | 说明                                         |
 | ---------------------------------------------------- | ------------------------------------------ |
 | `node_start`                                         | 进入图节点（如 retriever）                         |
-| `thinking_start` / `thinking_delta` / `thinking_end` | 三阶段 LLM 决策流式输出                             |
+| `planning_start` / `progress_delta` / `planning_end` | Planner 规划思路流式输出（小字区） |
+| `progress_waiting` / `progress_line`                 | 等待态（...... 闪烁）/ 过程行（检索到的文件名等） |
+| `thinking_start` / `thinking_delta` / `thinking_end` | 报告阶段工具决策（前端默认不展示 raw JSON） |
 | `tool_start` / `tool_end`                            | 工具调用中 / 完成                                 |
 | `answer_start` / `answer_delta` / `answer_end`       | 最终回答逐字流                                    |
 | `done`                                               | 含 `answer`、`session_id`、`report_url`、检索结果等 |

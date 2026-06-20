@@ -1,4 +1,4 @@
-﻿"""FastAPI application entry."""
+"""FastAPI application entry."""
 
 from __future__ import annotations
 

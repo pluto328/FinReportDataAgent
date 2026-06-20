@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
-from app.core.agent.events import emit_node_start
+from app.core.agent.events import emit_node_start, emit_progress_line, emit_progress_waiting
 from app.core.agent.nodes._debug_runtime import print_node_result, sample_state, stub_runtime
 from app.core.agent.nodes._node_log import node_logger
 from app.core.agent.nodes.retrieve_data import retrieve_data_node
@@ -25,6 +26,19 @@ async def retriever_node(state: AgentState, runtime: AgentRuntime) -> dict:
     )
     log.info("并行执行知识检索与元数据检索")
     await emit_node_start("retriever")
+    if state.get("retrieval_from_reporter"):
+        enable_knowledge = bool(state.get("supplemental_retrieve_knowledge"))
+        enable_data = bool(state.get("supplemental_retrieve_data"))
+    else:
+        enable_knowledge = bool(flags and flags.enable_knowledge_retrieve)
+        enable_data = bool(flags and flags.enable_data_retrieve)
+    wait_parts: list[str] = []
+    if enable_knowledge and text_q.strip():
+        wait_parts.append(f"正在检索 {text_q.strip()} 相关文本")
+    if enable_data and data_q.strip():
+        wait_parts.append(f"正在检索 {data_q.strip()} 相关数据")
+    if wait_parts:
+        await emit_progress_waiting("；".join(wait_parts), active=True)
     k_res, d_res = await asyncio.gather(
         retrieve_knowledge_node(state, runtime),
         retrieve_data_node(state, runtime),
@@ -44,6 +58,21 @@ async def retriever_node(state: AgentState, runtime: AgentRuntime) -> dict:
                 merged[key] = val
     k_count = len(merged.get("knowledge_chunks") or [])
     d_count = len(merged.get("data_file_paths") or [])
+    await emit_progress_waiting(active=False)
+    retrieved_names: set[str] = set()
+    for chunk in merged.get("knowledge_chunks") or []:
+        src = chunk.chunk.source_file
+        if src:
+            retrieved_names.add(Path(src).name)
+    for path in merged.get("data_file_paths") or []:
+        if path:
+            retrieved_names.add(Path(path).name)
+    for hit in merged.get("meta_hits") or []:
+        name = hit.record.file_name or hit.record.file_path
+        if name:
+            retrieved_names.add(Path(name).name)
+    for name in sorted(retrieved_names):
+        await emit_progress_line(f"检索到：{name}")
     log.info("检索汇总", knowledge_chunks=k_count, data_files=d_count)
     log.end(knowledge_chunks=k_count, data_files=d_count)
     return merged

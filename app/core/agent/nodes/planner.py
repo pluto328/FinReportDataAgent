@@ -125,7 +125,9 @@ async def planner_node(state: AgentState, runtime: AgentRuntime) -> dict:
 
     prompt = build_planner_prompt(state, runtime)
     log.debug("调用 LLM 规划（含入口校验）", plan_step=plan_step, entry_pass=is_entry_pass)
-    raw = await invoke_llm_decision(runtime.llm, prompt, phase="planner")
+    raw = await invoke_llm_decision(
+        runtime.llm, prompt, phase="planner", stream_field="planning_thought"
+    )
 
     parsed = parse_planner_response(
         raw,

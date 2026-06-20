@@ -283,6 +283,36 @@
     .agent-step-line.ok { color: var(--success); }
     .agent-step-line.fail { color: #fecaca; }
 
+    .plan-thinking,
+    .progress-text {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+      margin: 0.15rem 0 0.35rem 0.25rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .progress-waiting-line {
+      display: block;
+      margin-top: 0.15rem;
+    }
+
+    .progress-waiting-dots {
+      display: inline-block;
+      letter-spacing: 0.05em;
+      animation: progressDotBlink 1s ease-in-out infinite;
+    }
+
+    @keyframes progressDotBlink {
+      0%, 100% { opacity: 0.25; }
+      50% { opacity: 1; }
+    }
+
+    .msg-bubble.answer-only {
+      min-height: 1.5rem;
+    }
+
     .thinking-block {
       margin-bottom: 0.65rem;
       font-size: 0.75rem;
@@ -620,17 +650,14 @@
       div.dataset.index = String(index);
 
       let body = escapeHtml(item.content);
+      let progressHtml = "";
       let metaHtml = "";
 
       if (!isUser && item.meta) {
         const m = item.meta;
-        if (m.stream_steps && m.stream_steps.length) {
-          body = `<div class="agent-steps">${m.stream_steps.map((s) =>
-            `<div class="agent-step-line">${escapeHtml(s)}</div>`
-          ).join("")}</div>` + body;
-        }
-        if (m.thinking) {
-          body = `<details class="thinking-block"><summary>思考过程</summary><div class="thinking-content">${escapeHtml(m.thinking)}</div></details>` + body;
+        const progressText = m.progress_text || m.planning_thought || "";
+        if (progressText) {
+          progressHtml = `<div class="progress-text">${escapeHtml(progressText)}</div>`;
         }
         metaHtml += `<span class="tag ${statusTagClass(m.status)}">${escapeHtml(m.status || "ok")}</span>`;
         metaHtml += reportActionsHtml(m);
@@ -645,7 +672,8 @@
 
       div.innerHTML = `
         <div class="msg-role">${isUser ? "你" : "助手"}</div>
-        <div class="msg-bubble" title="${escapeHtml(actionHint)}">${body}</div>
+        ${progressHtml}
+        <div class="msg-bubble answer-only" title="${escapeHtml(actionHint)}">${body}</div>
         <div class="msg-actions">
           <button type="button" class="msg-action" data-action="${isUser ? "reask" : "branch"}" data-index="${index}">${actionLabel}</button>
         </div>
@@ -665,10 +693,13 @@
       div.id = "streamingBubble";
       div.innerHTML = `
         <div class="msg-role">助手</div>
-        <div class="msg-bubble">
-          <div class="agent-steps" id="streamSteps"></div>
-          <div id="streamThinkingWrap"></div>
-          <hr class="stream-divider" id="streamDivider" style="display:none" />
+        <div class="progress-text" id="streamProgress">
+          <span id="streamProgressContent"></span>
+          <span class="progress-waiting-line" id="streamProgressWaiting" style="display:none">
+            <span id="streamProgressWaitingText"></span><span class="progress-waiting-dots">......</span>
+          </span>
+        </div>
+        <div class="msg-bubble answer-only">
           <div class="answer-stream" id="streamAnswer"></div>
         </div>`;
       return div;
@@ -684,73 +715,100 @@
       return bubble;
     }
 
-    function appendStepLine(text, cls) {
-      const steps = document.getElementById("streamSteps");
-      if (!steps) return;
-      const line = document.createElement("div");
-      line.className = "agent-step-line " + (cls || "");
-      line.textContent = text;
-      steps.appendChild(line);
+    function updateProgressDisplay(streamState) {
+      const contentEl = document.getElementById("streamProgressContent");
+      const waitingEl = document.getElementById("streamProgressWaiting");
+      const waitingTextEl = document.getElementById("streamProgressWaitingText");
+      if (contentEl) contentEl.textContent = streamState.progressText || "";
+      if (waitingEl && waitingTextEl) {
+        if (streamState.waitingActive && streamState.waitingText) {
+          waitingEl.style.display = "block";
+          waitingTextEl.textContent = streamState.waitingText;
+        } else {
+          waitingEl.style.display = "none";
+          waitingTextEl.textContent = "";
+        }
+      }
+    }
+
+    function appendProgressDelta(text, streamState) {
+      if (!text) return;
+      streamState.progressText = (streamState.progressText || "") + text;
+      updateProgressDisplay(streamState);
       scrollChatToBottom();
     }
 
-    function ensureThinkingBlock(phase) {
-      const wrap = document.getElementById("streamThinkingWrap");
-      if (!wrap) return null;
-      const id = "thinking-" + phase;
-      let block = document.getElementById(id);
-      if (!block) {
-        block = document.createElement("details");
-        block.className = "thinking-block";
-        block.id = id;
-        block.open = true;
-        block.innerHTML = `<summary>${escapeHtml(phaseLabel(phase))} 思考中…</summary><div class="thinking-content"></div>`;
-        wrap.appendChild(block);
+    function appendProgressLine(text, streamState) {
+      if (!text) return;
+      const prefix = streamState.progressText ? "\n" : "";
+      streamState.progressText = (streamState.progressText || "") + prefix + text;
+      updateProgressDisplay(streamState);
+      scrollChatToBottom();
+    }
+
+    function setProgressWaiting(text, active, streamState) {
+      if (active) {
+        streamState.waitingActive = true;
+        streamState.waitingText = text || "";
+      } else {
+        if (streamState.waitingActive && streamState.waitingText) {
+          appendProgressLine(streamState.waitingText, streamState);
+        }
+        streamState.waitingActive = false;
+        streamState.waitingText = "";
       }
-      return block.querySelector(".thinking-content");
+      updateProgressDisplay(streamState);
+      scrollChatToBottom();
     }
 
     function handleStreamEvent(ev, streamState) {
       ensureStreamingBubble();
       switch (ev.type) {
         case "node_start":
-          appendStepLine("▶ " + (ev.node || "node"), "running");
+          break;
+        case "planning_start":
+          streamState.progressText = "";
+          streamState.planningThought = "";
+          updateProgressDisplay(streamState);
+          break;
+        case "planning_delta":
+        case "progress_delta":
+          appendProgressDelta(ev.text || "", streamState);
+          if (ev.type === "planning_delta") {
+            streamState.planningThought = (streamState.planningThought || "") + (ev.text || "");
+          }
+          break;
+        case "planning_end":
+          if (ev.planning_thought) {
+            streamState.planningThought = ev.planning_thought;
+            if (!streamState.progressText) {
+              streamState.progressText = ev.planning_thought;
+              updateProgressDisplay(streamState);
+            }
+          }
+          break;
+        case "progress_line":
+          appendProgressLine(ev.text || "", streamState);
+          break;
+        case "progress_waiting":
+          setProgressWaiting(ev.text || "", ev.active !== false, streamState);
+          break;
+        case "retrieval_status":
+          setProgressWaiting(ev.label || ("正在检索 " + (ev.query || "")), true, streamState);
           break;
         case "thinking_start":
-          streamState.currentPhase = ev.phase;
-          streamState.thinkingText = "";
-          ensureThinkingBlock(ev.phase);
-          break;
         case "thinking_delta":
-          streamState.thinkingText = (streamState.thinkingText || "") + (ev.text || "");
-          {
-            const content = ensureThinkingBlock(ev.phase || streamState.currentPhase);
-            if (content) content.textContent = streamState.thinkingText;
-          }
-          scrollChatToBottom();
+        case "thinking_end":
           break;
-        case "thinking_end": {
-          const phase = ev.phase || streamState.currentPhase;
-          const block = document.getElementById("thinking-" + phase);
-          if (block) {
-            const summary = block.querySelector("summary");
-            if (summary) summary.textContent = phaseLabel(phase) + " 决策完成";
-            const content = block.querySelector(".thinking-content");
-            if (content) content.textContent = ev.raw || streamState.thinkingText || "";
-          }
-          break;
-        }
         case "tool_start":
-          appendStepLine("⏳ " + (ev.label || ev.name), "running");
+          if (ev.label) setProgressWaiting(ev.label.replace(/…$/, ""), true, streamState);
           break;
         case "tool_end":
-          appendStepLine((ev.ok ? "✓ " : "✗ ") + (ev.label || ev.name), ev.ok ? "ok" : "fail");
+          setProgressWaiting("", false, streamState);
+          if (ev.label) appendProgressLine((ev.ok ? "✓ " : "✗ ") + ev.label, streamState);
           break;
-        case "answer_start": {
-          const divider = document.getElementById("streamDivider");
-          if (divider) divider.style.display = "block";
+        case "answer_start":
           break;
-        }
         case "answer_delta": {
           const answerEl = document.getElementById("streamAnswer");
           if (answerEl) {
@@ -761,7 +819,12 @@
           break;
         }
         case "answer_end":
-          if (ev.text) streamState.answer = ev.text;
+          if (ev.text) {
+            streamState.answer = ev.text;
+            const answerEl = document.getElementById("streamAnswer");
+            if (answerEl) answerEl.textContent = streamState.answer;
+          }
+          setProgressWaiting("", false, streamState);
           break;
         default:
           break;
@@ -937,7 +1000,13 @@
       showHint("");
       setLoading(true);
 
-      const streamState = { answer: "", thinkingText: "", steps: [] };
+      const streamState = {
+        answer: "",
+        progressText: "",
+        planningThought: "",
+        waitingActive: false,
+        waitingText: "",
+      };
 
       try {
         const res = await fetch(base + path, {
@@ -978,13 +1047,7 @@
           answerText = data.message || answerText || "报告已生成，可点击下方按钮打开或下载。";
         }
 
-        const stepsEl = document.getElementById("streamSteps");
-        const streamSteps = stepsEl
-          ? Array.from(stepsEl.querySelectorAll(".agent-step-line")).map((n) => n.textContent)
-          : [];
-
-        const thinkingBlocks = document.querySelectorAll("#streamThinkingWrap .thinking-content");
-        const thinking = Array.from(thinkingBlocks).map((n) => n.textContent).join("\n\n");
+        setProgressWaiting("", false, streamState);
 
         chatHistory.push({
           role: "assistant",
@@ -997,8 +1060,8 @@
               knowledge_chunks: data.knowledge_chunks,
               meta_hits: data.meta_hits,
             },
-            stream_steps: streamSteps,
-            thinking: thinking,
+            progress_text: streamState.progressText || streamState.planningThought || "",
+            planning_thought: streamState.planningThought || "",
           },
         });
         saveChatToStorage();

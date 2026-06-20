@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 from app.core.agent.events import emit_tool_end, emit_tool_start
 from app.core.agent.nodes._debug_runtime import print_node_result, sample_state, stub_runtime
@@ -83,7 +84,14 @@ async def data_tool_node(state: AgentState, runtime: AgentRuntime) -> dict:
         error = f"tool not found: {tool_name}"
         log.fail("工具未找到", tool_name=tool_name)
 
-    await emit_tool_end("data", tool_name, ok=not error, error=error)
+    output_path = str(result.get("path") or "") if result and not error else ""
+    await emit_tool_end(
+        "data",
+        tool_name,
+        ok=not error,
+        error=error,
+        output_filename=Path(output_path).name if output_path else "",
+    )
 
     if catalog_updates and not error:
         register_session_artifacts(session_id, catalog_updates, runtime.settings)

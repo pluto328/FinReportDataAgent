@@ -13,8 +13,9 @@ from app.core.tools.structured_ops import filter_rows, read_table_full
 class DataFilterTool(BaseTool):
     name = "data_filter"
     description = (
-        "按列条件筛选结构化数据并保存为原格式文件（文件名以 _processed 加原后缀结尾）。"
+        "按列条件筛选结构化数据并保存为原格式文件。"
         "入参：file_path（绝对路径）、column（列名）、op（eq|contains，默认 eq）、value（比较值）、"
+        "artifact_name（必填，保存文件名含后缀，根据描述取名，不与已有中间数据文件名重复）、"
         "artifact_description（必填，产物中文说明，如「龙虎榜前五名数据」）。"
         "返回：path（保存后的绝对路径）。"
     )
@@ -30,5 +31,8 @@ class DataFilterTool(BaseTool):
             str(kwargs.get("op", "eq")),
             str(kwargs.get("value", "")),
         )
-        ref = save_dataframe_processed(filtered, path, session_id, settings, mode="tool")
+        ref = save_dataframe_processed(
+            filtered, path, session_id, settings, mode="tool",
+            artifact_name=str(kwargs.get("artifact_name", "")),
+        )
         return {"path": ref.path}

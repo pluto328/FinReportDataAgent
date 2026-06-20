@@ -11,7 +11,11 @@ from app.core.agent.nodes._helpers import (
     summarize_plan_steps,
 )
 from app.core.agent.state import AgentRuntime, AgentState
-from app.core.session.process_artifact_store import format_intermediate_catalog, get_session_catalog
+from app.core.session.process_artifact_store import (
+    format_intermediate_catalog_for_agent,
+    get_session_catalog,
+    resolve_catalog_path,
+)
 
 
 def _format_document_chunks(chunks: list, *, limit: int = 8, content_len: int = 400) -> str:
@@ -82,7 +86,7 @@ def build_reporter_prompt(
     history_block = history_ctx.get("context_text", "") if history_ctx else ""
     history = format_report_tool_history(report_steps)
     tool_catalog = report_tool_catalog(runtime)
-    catalog_text = format_intermediate_catalog(
+    catalog_text = format_intermediate_catalog_for_agent(
         get_session_catalog(state.get("session_id", ""), runtime.settings)
     )
     chart_paths = [c.path for c in charts if c.path]
@@ -110,7 +114,7 @@ def build_reporter_prompt(
         f"历史上下文:\n{history_block}\n"
         f"规划结果:{json.dumps(plan_context, ensure_ascii=False)[:800]}\n"
         f"data_process_plan:{data_desc}\n"
-        f"中间数据（路径:描述）:\n{catalog_text}\n"
+        f"中间数据（文件名:描述）:\n{catalog_text}\n"
         f"文档片段:\n{doc_text}\n"
         f"图表路径:{chart_paths}\n"
         f"工具调用历史({report_step}/{max_report_steps}):\n{history}\n"
@@ -123,7 +127,8 @@ def build_reporter_prompt(
         "query 须与已检索记录中的 query 不同，且应换角度/换关键词以获取未命中的数据。\n"
         "2. 若仍需补充知识文本检索，action=retrieve_text 并填写 text_query（可与 data_query 无关，单独检索）；"
         "query 须避免与已检索记录重复，并尽量覆盖尚未命中的文档来源。\n"
-        "3. 若需读取中间数据全文，action=call_tool，tool_name=read_data_file，params.path 为绝对路径。\n"
+        "3. 若需读取中间数据全文，action=call_tool，tool_name=read_data_file，"
+        "params.path 填上方中间数据列表中的文件名（不要猜路径、不要自行加 _processed 后缀）。\n"
         "4. 信息已足够时 action=done，并填写 answer/report/summary。\n"
         "5. action 为 retrieve_text、retrieve_data 或 call_tool 时，answer、report、summary 必须均为空字符串。\n"
         f"6. action 为 done 时：{report_rule}\n"

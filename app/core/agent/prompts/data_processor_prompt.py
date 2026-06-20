@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from app.core.agent.nodes._helpers import data_tool_catalog, format_data_tool_history
 from app.core.agent.state import AgentRuntime, AgentState
-from app.core.session.process_artifact_store import format_intermediate_catalog, get_session_catalog
+from app.core.session.process_artifact_store import (
+    format_intermediate_catalog_for_agent,
+    get_session_catalog,
+    resolve_catalog_path,
+)
 
 
 def build_data_processor_prompt(state: AgentState, runtime: AgentRuntime) -> str:
@@ -15,42 +19,44 @@ def build_data_processor_prompt(state: AgentState, runtime: AgentRuntime) -> str
     data_process_plan = state.get("data_process_plan", "")
     history_text = format_data_tool_history(prior_steps)
     session_id = state.get("session_id", "")
-    catalog_text = format_intermediate_catalog(
+    catalog_text = format_intermediate_catalog_for_agent(
         get_session_catalog(session_id, runtime.settings)
     )
     tool_catalog = data_tool_catalog(runtime)
-    tool_rules = """第一步，结合处理需求，对相关文件进行预览（preview_read，不产生新文件，无需 artifact_description）。
+    tool_rules = """第一步，结合处理需求，对相关文件进行预览（preview_read，不产生新文件，无需 artifact_name/artifact_description）。
     第二步，如果需要进行进一步数据处理，则调用工具计算，只计算不绘图。
     纯筛选数据，则调用 data_filter 工具。
     逻辑复杂、执行 code，则调用 pandas_execute（code 禁止 import、pd.read_*、任何注释 #，直接使用 df/pd/np，结果赋给 result 或写回 df）。
     需 SQL 查询，则调用 sql_execute（sql 禁止任何注释 -- 或 /* */，仅 SELECT 语句正文）。
     第三步，如果需要画图，则调用 make_chart 工具。
     凡会保存新文件的工具（data_filter、sql_execute、pandas_execute、make_chart），
-    必须在 params 中填写 artifact_description：用简短中文说明该文件是什么，
-    例如「负债榜前五名数据」「北向持股 Top10 柱状图」，便于后续节点识别中间数据。
-    preview_read 与 action=done/replan 时不需要 artifact_description。"""
+    必须在 params 中填写 artifact_name 与 artifact_description：
+    artifact_name 为保存文件名（含后缀，如 liability_top5.csv、top5_chart.png），根据 artifact_description 用简短英文/拼音取名，
+    且不得与会话已有中间数据文件名重复（见上方「已知数据记录」中的文件名）；
+    artifact_description 用简短中文说明该文件是什么，例如「负债榜前五名数据」「北向持股 Top10 柱状图」。
+    preview_read 与 action=done/replan 时不需要 artifact_name/artifact_description。"""
 
     return (
         f"用户问题:{state.get('user_query','')}\n"
         f"data_process_plan（planner 给出的数据处理计划）:\n{data_process_plan}\n"
         f"数据文件:{file_path}\n"
-        f"已知数据记录（路径:描述）:\n{catalog_text}\n"
+        f"已知数据记录（文件名:描述）:\n{catalog_text}\n"
         f"工具调用历史({current_step}/{max_steps}):\n{history_text}\n"
         "请结合 data_process_plan 与工具调用历史决定下一步："
         "若已知数据已满足要求则 action=done；"
         "若需继续处理则 action=call_tool 并选择合适工具；"
         "若发现原计划不合理或需调整步骤，则 action=replan 并重新填写 data_process_plan（分点标号，含取数、处理、计算、保存、是否画图）。\n"
         "若最新步骤为 error，根据 error 调整工具入参重试；同一工具连续两次 error 则换工具重试。\n"
-        "call_tool 且工具会产出文件时，params 必须含 artifact_description（见下方规则）。\n"
+        "call_tool 且工具会产出文件时，params 必须含 artifact_name 与 artifact_description（见下方规则）。\n"
         "仅输出 JSON，不要输出任何其他内容："
         '{"action":"call_tool|done|replan",'
         '"tool_name":"",'
-        '"params":{"file_path":"","artifact_description":""},'
+        '"params":{"file_path":"","artifact_name":"","artifact_description":""},'
         '"data_process_plan":""}\n'
         "示例（筛选并保存）："
         '{"action":"call_tool","tool_name":"pandas_execute",'
         '"params":{"file_path":"/abs/path/data.csv","code":"df=df[df[\'col\']>0]; result=df",'
-        '"artifact_description":"负债榜前五名数据"},"data_process_plan":""}\n'
+        '"artifact_name":"liability_top5.csv","artifact_description":"负债榜前五名数据"},"data_process_plan":""}\n'
         f"可调用 data 工具:\n{tool_catalog}\n"
         "调用工具规则为：\n"
         f"{tool_rules}\n"

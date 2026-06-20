@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from app.core.agent.events import invoke_llm_decision
+from app.core.agent.events import emit_progress_waiting, invoke_llm_decision
 from app.core.agent.nodes._debug_runtime import print_node_result, sample_state, stub_runtime
 from app.core.agent.nodes._helpers import append_node, summarize_data_tool_steps
 from app.core.agent.nodes._node_log import node_logger
@@ -78,7 +78,11 @@ async def data_processor_node(state: AgentState, runtime: AgentRuntime) -> dict:
 
     prompt = build_data_processor_prompt(state, runtime)
     log.debug("调用 LLM 决定数据处理步骤", process_step=current_step)
-    raw = await invoke_llm_decision(runtime.llm, prompt, phase="data_processor")
+    await emit_progress_waiting("正在规划数据处理", active=True)
+    raw = await invoke_llm_decision(
+        runtime.llm, prompt, phase="data_processor", emit_thinking=False
+    )
+    await emit_progress_waiting(active=False)
     parsed = parse_data_processor_response(
         raw,
         file_path=file_path,
