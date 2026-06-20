@@ -87,9 +87,37 @@ def register_session_artifacts(
 
 
 def reset_session_workspace(session_id: str, settings: Settings | None = None) -> None:
-    """Clear in-memory catalog, processed files, and catalog file for a new session."""
+    """Clear in-memory catalog, processed files, history, and reports for a session."""
+    destroy_session_data(session_id, settings)
+
+
+def destroy_session_data(session_id: str, settings: Settings | None = None) -> None:
+    """Remove all on-disk and in-memory artifacts for a session."""
+    if not session_id:
+        return
+    s = settings or get_settings()
     _session_catalogs.pop(session_id, None)
-    clear_session_workspace(session_id, settings)
+    session_dir = s.cache_path / session_id
+    if session_dir.exists():
+        shutil.rmtree(session_dir, ignore_errors=True)
+    report_dir = s.report_output_path / session_id
+    if report_dir.exists():
+        shutil.rmtree(report_dir, ignore_errors=True)
+
+
+def clear_all_session_caches(settings: Settings | None = None) -> int:
+    """Remove every session workspace under cache_path and report_output_path. Returns count cleared."""
+    s = settings or get_settings()
+    _session_catalogs.clear()
+    cleared = 0
+    for root in (s.cache_path, s.report_output_path):
+        if not root.exists():
+            continue
+        for child in root.iterdir():
+            if child.is_dir():
+                shutil.rmtree(child, ignore_errors=True)
+                cleared += 1
+    return cleared
 
 
 def format_intermediate_catalog(catalog: dict[str, str]) -> str:

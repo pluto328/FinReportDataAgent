@@ -543,6 +543,29 @@
       }
     }
 
+    function clearLocalSessionStorage(sid) {
+      if (sid) {
+        try {
+          localStorage.removeItem(STORAGE_CHAT_PREFIX + sid);
+        } catch (_) { /* ignore */ }
+      }
+      localStorage.removeItem(STORAGE_SESSION);
+    }
+
+    function destroySessionOnServer(sid, { keepalive = false } = {}) {
+      if (!sid) return;
+      const base = el.base.value.replace(/\/$/, "");
+      const url = base + "/session/" + encodeURIComponent(sid);
+      try {
+        fetch(url, { method: "DELETE", keepalive: keepalive }).catch(() => {});
+      } catch (_) { /* ignore */ }
+    }
+
+    function teardownSession(sid, { notifyServer = true, keepalive = false } = {}) {
+      if (notifyServer) destroySessionOnServer(sid, { keepalive });
+      clearLocalSessionStorage(sid);
+    }
+
     function ensureSession() {
       if (!sessionId) {
         sessionId = uuid().slice(0, 16);
@@ -1094,6 +1117,8 @@
     });
 
     el.newSession.addEventListener("click", () => {
+      const oldSession = sessionId;
+      teardownSession(oldSession, { notifyServer: true });
       sessionId = uuid().slice(0, 16);
       pendingNewSession = true;
       localStorage.setItem(STORAGE_SESSION, sessionId);
@@ -1104,6 +1129,15 @@
       renderChat();
       showHint("");
       el.query.focus();
+    });
+
+    window.addEventListener("pagehide", (ev) => {
+      if (ev.persisted) return;
+      const sid = sessionId;
+      if (!sid) return;
+      teardownSession(sid, { notifyServer: true, keepalive: true });
+      sessionId = "";
+      chatHistory = [];
     });
 
     ensureSession();
