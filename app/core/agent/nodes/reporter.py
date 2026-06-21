@@ -206,6 +206,13 @@ async def reporter_node(state: AgentState, runtime: AgentRuntime) -> dict:
         params = parsed["params"]
         text_q = parsed["text_query"]
         data_q = parsed["data_query"]
+        if force_done and action in ("call_tool", "retrieve_text", "retrieve_data"):
+            log.info("报告步数已达上限，忽略 {}", action)
+            action = "done"
+            tool_name = ""
+            params = {}
+            text_q = ""
+            data_q = ""
         log.info("LLM 报告决策", action=action, tool_name=tool_name if action == "call_tool" else "")
 
         if force_done or action != "call_tool" or tool_name != "read_data_file":
@@ -224,9 +231,11 @@ async def reporter_node(state: AgentState, runtime: AgentRuntime) -> dict:
         if report_context.get("loaded_path"):
             loaded_paths.add(str(report_context["loaded_path"]))
         if resolved and resolved in loaded_paths:
-            log.info("跳过重复 read_data_file", path=resolved)
-            force_done = report_step + 1 >= max_report_steps
-            continue
+            log.info("跳过重复 read_data_file，直接生成回答", path=resolved)
+            action = "done"
+            tool_name = ""
+            params = {}
+            break
         break
 
     if not force_done and action == "retrieve_text" and text_q and retrieval_round + 1 < max_rounds:

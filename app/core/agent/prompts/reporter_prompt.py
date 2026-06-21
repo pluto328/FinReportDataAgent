@@ -129,7 +129,10 @@ def build_reporter_prompt(
 
     force_line = ""
     if force_done:
-        force_line = f"已达最大工具步数({max_report_steps})，必须 action=done 并输出最终 answer 与 summary。\n"
+        force_line = (
+            f"已达最大 report tool 步数({max_report_steps})，必须 action=done 并输出最终 answer 与 summary，"
+            "禁止 call_tool、retrieve_text、retrieve_data。\n"
+        )
 
     return (
         f"问题:{state.get('user_query', '')}\n"

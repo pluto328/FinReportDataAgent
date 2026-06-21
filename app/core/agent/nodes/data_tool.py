@@ -8,7 +8,7 @@ from pathlib import Path
 
 from app.core.agent.events import emit_tool_end, emit_tool_start
 from app.core.agent.nodes._debug_runtime import print_node_result, sample_state, stub_runtime
-from app.core.agent.nodes._helpers import append_node, summarize_data_tool_steps
+from app.core.agent.nodes._helpers import append_node, normalize_data_tool_params, summarize_data_tool_steps
 from app.core.agent.nodes._node_log import node_logger
 from app.core.agent.state import AgentRuntime, AgentState
 from app.core.session.process_artifact_store import register_session_artifacts
@@ -37,10 +37,11 @@ async def data_tool_node(state: AgentState, runtime: AgentRuntime) -> dict:
 
     session_id = state.get("session_id", "default")
     step_no = state.get("process_step", 0) + 1
-    params = dict(pending.params)
-    file_path = pending.file_path or params.get("file_path", "")
-    params.setdefault("file_path", file_path)
     tool_name = pending.tool_name
+    params = normalize_data_tool_params(dict(pending.params), file_paths=list(state.get("data_file_paths") or []))
+    file_path = pending.file_path or params.get("file_path", "")
+    if tool_name in {"sql_execute", "pandas_execute"}:
+        file_path = ", ".join(params.get("file_paths") or ([file_path] if file_path else []))
     log.start(tool_name=tool_name, step=step_no, file_path=file_path, params=params)
     log.info("触发 data tool 调用", tool_name=tool_name)
     await emit_tool_start("data", tool_name)

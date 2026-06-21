@@ -108,8 +108,8 @@ class Settings(BaseSettings):
     enable_dense: bool = Field(default=True, description="Chroma dense vector recall")
     es_weight: float = Field(default=0.4, ge=0.0, description="Keyword channel weight in fusion")
     dense_weight: float = Field(default=0.6, ge=0.0, description="Vector similarity channel weight")
-    base_top_k: int = Field(default=20, ge=1)
-    final_top_k: int = Field(default=10, ge=1)
+    base_top_k: int = Field(default=10, ge=1)
+    final_top_k: int = Field(default=5, ge=1)
     min_rerank_score: float = Field(
         default=0.65,
         ge=0.0,

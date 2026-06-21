@@ -27,7 +27,12 @@ def _entry_validation_rules(has_history: bool) -> str:
     )
 
 
-def build_planner_prompt(state: AgentState, runtime: AgentRuntime) -> str:
+def build_planner_prompt(
+    state: AgentState,
+    runtime: AgentRuntime,
+    *,
+    force_no_tool: bool = False,
+) -> str:
     query = state.get("user_query", "")
     plan_steps = state.get("plan_steps") or []
     plan_step = state.get("plan_step", 0)
@@ -46,11 +51,15 @@ def build_planner_prompt(state: AgentState, runtime: AgentRuntime) -> str:
 
     loaded_hint = prior_history.get("context_text", "") if history_loaded else "（尚未加载）"
 
-    reject_schema = (
-        '"action":"reject|call_tool|done","reject_reason":"chitchat|unclear|non_finance",'
-        if is_entry_pass
-        else '"action":"call_tool|done",'
-    )
+    if force_no_tool:
+        action_schema = '"action":"done",'
+    elif is_entry_pass:
+        action_schema = '"action":"reject|call_tool|done","reject_reason":"chitchat|unclear|non_finance",'
+    else:
+        action_schema = '"action":"call_tool|done",'
+    force_line = ""
+    if force_no_tool:
+        force_line = f"已达最大 plan tool 步数({max_steps})，必须 action=done，禁止 call_tool。\n"
     entry_rules = _entry_validation_rules(has_history) if is_entry_pass else ""
     operation_rules ="""若会话历史数据（文件名:描述）已包含所需中间结果，可跳过数据检索与数据处理，直接图表生成或报告生成。
     若涉及数据计算且历史数据不包含所需数据，则进行数据检索，
@@ -60,24 +69,27 @@ def build_planner_prompt(state: AgentState, runtime: AgentRuntime) -> str:
     若用户输入明确流程，则按照用户需求决定"""
     return (
         f"用户问题:{query}\n"
+        f"已加载历史上下文:\n{loaded_hint}\n"
         "你是任务规划器"
         "你需要：1.判断用户问题是否有效，规则为"
         f"{entry_rules}"
         "2.判断问题含有刚才/之前/继续/上述/同样等追问上文时，调用工具load_history_context。action = call_tool。否则action = done。"
         "3.填写 planning_thought（JSON 第一个字段）：用 1-3 句中文描述规划思路，句式以「用户让我…」或「用户想咨询…」开头，"
         "接着写「我需要先…再…」（可继续「然后…」）；只写思路，不要写 JSON 字段名或 action 枚举。"
-        "4.分析问题，有历史内容时结合历史问题分析，判断具体需求，确定以下操作是否进行:知识检索、数据检索、数据处理、图表生成、报告生成。并填写enable_*，填true或false。规则为"
+        "4.分析问题，有历史上下文时，结合历史上下文判断具体需求，确定以下操作是否进行:知识检索、数据检索、数据处理、图表生成、报告生成。并填写enable_*，填true或false。规则为"
         f"{operation_rules}\n"
         "5.如果需要进行文本检索，提取需求，扩写，尽量检索出更多有效信息，并填写text_query。\n"
         "6.如果需要数据处理，分点标号、列出处理步骤，大致描述为取数据、数据处理、数据计算、保存结果、是否画图。填写data_process_plan。\n"
         "7.根据数据处理要求填写data_query,要求使其尽量精准检索到相关数据文件"
+        "8.query中必须填具体需求的金融强相关词，不得填语气词或关联词"
+        f"{force_line}"
         "仅输出 JSON，不要输出任何其他内容（planning_thought 必须是第一个字段）：\n"
-        '{"planning_thought":"",' + reject_schema +
+        '{"planning_thought":"",' + action_schema +
         '"text_query":"","data_query":"","data_process_plan":"",'
         '"enable_knowledge_retrieve":false,"enable_data_retrieve":false,'
         '"enable_process":false,"enable_chart":false,"enable_report":false}\n'
         f"已调用plantool：({plan_step}/{max_steps}):\n{plan_history}\n"
-        f"已加载历史上下文:\n{loaded_hint}\n"
+
         f"会话历史数据（文件名:描述）:\n{catalog_text}\n"
         "规划时可参考以下常识理解用户问题：\n"
         f"{PLANNER_DOMAIN_KNOWLEDGE}\n"
@@ -89,8 +101,6 @@ def parse_planner_response(
     *,
     query: str,
     report_mode: bool,
-    plan_steps: list,
-    history_loaded: bool,
 ) -> dict:
     from app.core.agent.nodes._helpers import parse_llm_json
     from app.schemas.structured import NodeEnableFlags
@@ -109,7 +119,7 @@ def parse_planner_response(
             data, query, report_mode
         )
         if action not in ("call_tool", "done", "reject"):
-            action = "done" if plan_steps else "call_tool"
+            action = "done"
         return {
             "action": action,
             "tool_name": tool_name,
@@ -121,15 +131,12 @@ def parse_planner_response(
             "reject_reason": str(data.get("reject_reason", "unclear")),
         }
     except Exception:
-        lowered = query.lower()
-        if any(k in lowered for k in ("csv", "xlsx", "table", "数据", "统计", "图表")):
-            flags.enable_data_retrieve = True
-            flags.enable_process = True
-            data_process_plan = "读取并汇总结构化数据"
-        if not history_loaded and plan_steps == []:
-            action = "call_tool"
-            tool_name = "load_history_context"
-            params = {}
+        action = "done"
+        tool_name = ""
+        params = {}
+        text_q, data_q = query, query
+        flags = NodeEnableFlags()
+        data_process_plan = ""
     return {
         "action": action,
         "tool_name": tool_name,

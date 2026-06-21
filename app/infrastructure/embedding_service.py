@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import gc
 import json
 import time
 from functools import lru_cache
@@ -181,7 +180,6 @@ class EmbeddingService:
 
         if total > 1:
             logger.info("embedded {} vector(s)", len(vectors))
-        gc.collect()
         return vectors
 
     async def embed_query(self, query: str) -> list[float]:

@@ -5,6 +5,9 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import matplotlib
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 from matplotlib import font_manager
@@ -74,6 +77,7 @@ async def render_chart(
         fig.tight_layout()
         fig.savefig(fig_path, dpi=120)
         plt.close(fig)
+        plt.close("all")
 
     await asyncio.to_thread(_plot)
     return str(fig_path.resolve())

@@ -100,25 +100,11 @@ async def planner_node(state: AgentState, runtime: AgentRuntime) -> dict:
             log.end(query_rejected=True, reason="unclear", next_node="END")
             return out
 
-    if plan_step >= max_steps:
-        text_q, data_q, flags, description = apply_plan_flags({}, query, bool(state.get("report_mode")))
-        log.info("规划步数已达上限，强制 action=done", enables=_flags_line(flags))
-        out = {
-            "text_query": text_q,
-            "data_query": data_q,
-            "node_flags": flags,
-            "data_process_plan": description,
-            "plan_done": True,
-            "pending_tool": None,
-            "plan_context": summarize_plan_steps(plan_steps),
-            **append_node(state, "planner"),
-        }
-        _apply_history_to_queries(out, plan_steps, query)
-        log.info("生成 query 成功", text_query=text_q, data_query=data_q)
-        log.end(plan_done=True, enables=_flags_line(flags))
-        return out
+    force_no_tool = plan_step >= max_steps
+    if force_no_tool:
+        log.info("规划步数已达上限，禁止 call_tool")
 
-    prompt = build_planner_prompt(state, runtime)
+    prompt = build_planner_prompt(state, runtime, force_no_tool=force_no_tool)
     log.debug("调用 LLM 规划（含入口校验）", plan_step=plan_step, entry_pass=is_entry_pass)
     raw = await invoke_llm_decision(
         runtime.llm, prompt, phase="planner", stream_field="planning_thought"
@@ -128,8 +114,6 @@ async def planner_node(state: AgentState, runtime: AgentRuntime) -> dict:
         raw,
         query=query,
         report_mode=bool(state.get("report_mode")),
-        plan_steps=plan_steps,
-        history_loaded=history_loaded,
     )
     action = parsed["action"]
     tool_name = parsed["tool_name"]
@@ -138,6 +122,12 @@ async def planner_node(state: AgentState, runtime: AgentRuntime) -> dict:
     data_q = parsed["data_query"]
     flags = parsed["node_flags"]
     data_process_plan = parsed["data_process_plan"]
+
+    if force_no_tool and action == "call_tool":
+        log.info("规划步数已达上限，忽略 call_tool")
+        action = "done"
+        tool_name = ""
+        params = {}
 
     if action == "reject" and is_entry_pass:
         reason = str(parsed.get("reject_reason", "unclear"))

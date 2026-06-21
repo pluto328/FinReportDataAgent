@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import faulthandler
+import os
 import sys
+
+os.environ.setdefault("MPLBACKEND", "Agg")
 
 from app.config.settings import get_settings
 from app.infrastructure.hf_hub_config import configure_hf_hub

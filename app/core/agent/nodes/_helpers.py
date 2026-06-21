@@ -25,6 +25,30 @@ def parse_llm_json(raw: str) -> dict[str, Any]:
     return json.loads(match.group(0) if match else raw)
 
 
+def normalize_data_tool_params(params: dict, *, file_paths: list[str]) -> dict:
+    out = dict(params or {})
+    tool_paths = out.get("file_paths")
+    single = out.get("file_path")
+    if tool_paths:
+        if isinstance(tool_paths, str):
+            out["file_paths"] = [tool_paths]
+        else:
+            out["file_paths"] = [str(p) for p in tool_paths if p]
+    elif single:
+        if isinstance(single, list):
+            out["file_paths"] = [str(p) for p in single if p]
+        else:
+            out["file_paths"] = [str(single)]
+    elif file_paths:
+        out["file_paths"] = list(file_paths)
+    if out.get("file_paths") and not out.get("file_path"):
+        out["file_path"] = out["file_paths"][0]
+    elif out.get("file_path") and not out.get("file_paths"):
+        fp = out["file_path"]
+        out["file_paths"] = [str(fp)] if not isinstance(fp, list) else [str(p) for p in fp if p]
+    return out
+
+
 def summarize_data_tool_steps(steps: list[DataToolStepResult]) -> dict[str, Any]:
     if not steps:
         return {}

@@ -113,10 +113,32 @@ def _duckdb_read_expr(path: str) -> str:
     raise ValueError(f"unsupported format for SQL: {suffix}")
 
 
-def execute_sql_on_file(file_path: str, sql: str, *, limit: int | None = None) -> pd.DataFrame:
-    """Run read-only SELECT against a structured file via DuckDB."""
+def normalize_file_paths(file_path: str | list[str] | None = None, *, file_paths: list[str] | str | None = None) -> list[str]:
+    """Normalize single or list file path kwargs into a non-empty path list."""
+    raw: list[str] = []
+    if file_paths is not None:
+        if isinstance(file_paths, str):
+            raw = [file_paths]
+        else:
+            raw = [str(p) for p in file_paths if p]
+    elif file_path is not None:
+        if isinstance(file_path, str):
+            raw = [file_path] if file_path else []
+        else:
+            raw = [str(p) for p in file_path if p]
+    return raw
+
+
+def _sql_view_name(index: int) -> str:
+    return "src" if index == 0 else f"src{index + 1}"
+
+
+def execute_sql_on_files(file_paths: list[str], sql: str, *, limit: int | None = None) -> pd.DataFrame:
+    """Run read-only SELECT against one or more structured files via DuckDB."""
     import duckdb
 
+    if not file_paths:
+        raise ValueError("file_paths is required")
     if _DANGEROUS_SQL.search(sql):
         raise ValueError("only SELECT queries are allowed")
     normalized = sql.strip().rstrip(";")
@@ -125,11 +147,18 @@ def execute_sql_on_file(file_path: str, sql: str, *, limit: int | None = None) -
 
     s = get_settings()
     max_rows = limit or s.structured_query_max_rows
-    read_expr = _duckdb_read_expr(file_path)
     con = duckdb.connect(database=":memory:")
     try:
-        con.execute(f"CREATE VIEW src AS SELECT * FROM {read_expr}")
+        for i, fp in enumerate(file_paths):
+            view = _sql_view_name(i)
+            read_expr = _duckdb_read_expr(fp)
+            con.execute(f"CREATE VIEW {view} AS SELECT * FROM {read_expr}")
         wrapped = f"SELECT * FROM ({normalized}) AS q LIMIT {max_rows}"
         return con.execute(wrapped).df()
     finally:
         con.close()
+
+
+def execute_sql_on_file(file_path: str, sql: str, *, limit: int | None = None) -> pd.DataFrame:
+    """Run read-only SELECT against a structured file via DuckDB."""
+    return execute_sql_on_files([file_path], sql, limit=limit)
