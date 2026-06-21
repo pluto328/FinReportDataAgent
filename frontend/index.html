@@ -287,9 +287,9 @@
     .progress-text {
       font-size: 0.78rem;
       color: var(--text-muted);
-      line-height: 1.5;
-      margin: 0.15rem 0 0.35rem 0.25rem;
-      white-space: pre-wrap;
+      line-height: 1.45;
+      margin: 0.15rem 0 0.35rem 0;
+      white-space: pre-line;
       word-break: break-word;
     }
 
@@ -742,7 +742,7 @@
 
       if (!isUser && item.meta) {
         const m = item.meta;
-        const progressText = m.progress_text || m.planning_thought || "";
+        const progressText = normalizeProgressText(m.progress_text || m.planning_thought || "");
         if (progressText) {
           progressHtml = `<div class="progress-text">${escapeHtml(progressText)}</div>`;
         }
@@ -771,6 +771,15 @@
       return div;
     }
 
+    function normalizeProgressText(text) {
+      if (!text) return "";
+      return String(text)
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .join("\n");
+    }
+
     function phaseLabel(phase) {
       const map = { planner: "规划", data_processor: "数据处理", reporter: "回答" };
       return map[phase] || phase || "Agent";
@@ -778,7 +787,7 @@
 
     function createStreamingBubble() {
       const div = document.createElement("div");
-      div.className = "msg assistant typing";
+      div.className = "msg assistant";
       div.id = "streamingBubble";
       div.innerHTML = `
         <div class="msg-role">助手</div>
@@ -788,9 +797,7 @@
             <span id="streamProgressWaitingText"></span><span class="progress-waiting-dots">......</span>
           </span>
         </div>
-        <div class="msg-bubble answer-only" id="streamAnswerBubble" style="display:none">
-          <div class="answer-stream" id="streamAnswer"></div>
-        </div>
+        <div id="streamAnswerHost"></div>
         <div id="streamCharts"></div>`;
       return div;
     }
@@ -805,33 +812,39 @@
       return bubble;
     }
 
-    function showAnswerBubble() {
-      const bubble = document.getElementById("streamAnswerBubble");
-      if (bubble) bubble.style.display = "block";
-    }
-
-    function renderStreamCharts(paths) {
-      const wrap = document.getElementById("streamCharts");
-      if (!wrap || !paths || !paths.length) return;
-      wrap.innerHTML = renderChartsHtml(paths, sessionId);
-      bindChartActions(wrap);
+    function ensureAnswerBubble(streamState) {
+      if (streamState.answerBubbleShown) {
+        return document.getElementById("streamAnswer");
+      }
+      const host = document.getElementById("streamAnswerHost");
+      const wrap = document.getElementById("streamingBubble");
+      if (!host) return null;
+      host.innerHTML =
+        '<div class="msg-bubble answer-only"><div class="answer-stream" id="streamAnswer"></div></div>';
+      streamState.answerBubbleShown = true;
+      if (wrap) wrap.classList.add("typing");
+      scrollChatToBottom();
+      return document.getElementById("streamAnswer");
     }
 
     function endLlmConnecting(streamState) {
       if (!streamState.llmConnecting) return;
       streamState.llmConnecting = false;
-      setProgressWaiting("", false, streamState);
+      if (streamState.progressText === "正在连接大模型") {
+        streamState.progressText = "";
+      }
+      updateProgressDisplay(streamState);
     }
 
     function updateProgressDisplay(streamState) {
       const contentEl = document.getElementById("streamProgressContent");
       const waitingEl = document.getElementById("streamProgressWaiting");
       const waitingTextEl = document.getElementById("streamProgressWaitingText");
-      if (contentEl) contentEl.textContent = streamState.progressText || "";
+      if (contentEl) contentEl.textContent = normalizeProgressText(streamState.progressText || "");
       if (waitingEl && waitingTextEl) {
         if (streamState.waitingActive && streamState.waitingText) {
           waitingEl.style.display = "block";
-          waitingTextEl.textContent = streamState.waitingText;
+          waitingTextEl.textContent = streamState.waitingText.trim();
         } else {
           waitingEl.style.display = "none";
           waitingTextEl.textContent = "";
@@ -841,15 +854,21 @@
 
     function appendProgressDelta(text, streamState) {
       if (!text) return;
+      if (streamState.llmConnecting || streamState.progressText === "正在连接大模型") {
+        streamState.llmConnecting = false;
+        streamState.progressText = "";
+      }
       streamState.progressText = (streamState.progressText || "") + text;
       updateProgressDisplay(streamState);
       scrollChatToBottom();
     }
 
     function appendProgressLine(text, streamState) {
-      if (!text) return;
+      const line = String(text || "").trim();
+      if (!line) return;
+      endLlmConnecting(streamState);
       const prefix = streamState.progressText ? "\n" : "";
-      streamState.progressText = (streamState.progressText || "") + prefix + text;
+      streamState.progressText = (streamState.progressText || "") + prefix + line;
       updateProgressDisplay(streamState);
       scrollChatToBottom();
     }
@@ -857,7 +876,7 @@
     function setProgressWaiting(text, active, streamState) {
       if (active) {
         streamState.waitingActive = true;
-        streamState.waitingText = text || "";
+        streamState.waitingText = String(text || "").trim();
       } else {
         if (streamState.waitingActive && streamState.waitingText) {
           appendProgressLine(streamState.waitingText, streamState);
@@ -869,20 +888,34 @@
       scrollChatToBottom();
     }
 
+    function renderStreamCharts(paths) {
+      const wrap = document.getElementById("streamCharts");
+      if (!wrap || !paths || !paths.length) return;
+      wrap.innerHTML = renderChartsHtml(paths, sessionId);
+      bindChartActions(wrap);
+    }
+
+    function appendAnswerDelta(text, streamState) {
+      const chunk = String(text || "");
+      if (!chunk) return;
+      endLlmConnecting(streamState);
+      const answerEl = ensureAnswerBubble(streamState);
+      if (!answerEl) return;
+      streamState.answer = (streamState.answer || "") + chunk;
+      answerEl.textContent = streamState.answer;
+      scrollChatToBottom();
+    }
+
     function handleStreamEvent(ev, streamState) {
       ensureStreamingBubble();
       switch (ev.type) {
         case "node_start":
           break;
         case "planning_start":
-          endLlmConnecting(streamState);
-          streamState.progressText = "";
           streamState.planningThought = "";
-          updateProgressDisplay(streamState);
           break;
         case "planning_delta":
         case "progress_delta":
-          endLlmConnecting(streamState);
           appendProgressDelta(ev.text || "", streamState);
           if (ev.type === "planning_delta") {
             streamState.planningThought = (streamState.planningThought || "") + (ev.text || "");
@@ -919,27 +952,21 @@
           break;
         case "answer_start":
           endLlmConnecting(streamState);
-          showAnswerBubble();
           break;
-        case "answer_delta": {
+        case "answer_delta":
+          appendAnswerDelta(ev.text || "", streamState);
+          break;
+        case "answer_end": {
           endLlmConnecting(streamState);
-          showAnswerBubble();
-          const answerEl = document.getElementById("streamAnswer");
-          if (answerEl) {
-            streamState.answer = (streamState.answer || "") + (ev.text || "");
-            answerEl.textContent = streamState.answer;
-          }
-          scrollChatToBottom();
-          break;
-        }
-        case "answer_end":
-          if (ev.text) {
-            streamState.answer = ev.text;
-            const answerEl = document.getElementById("streamAnswer");
+          const finalText = ev.text || streamState.answer || "";
+          if (finalText) {
+            const answerEl = ensureAnswerBubble(streamState);
+            streamState.answer = finalText;
             if (answerEl) answerEl.textContent = streamState.answer;
           }
           setProgressWaiting("", false, streamState);
           break;
+        }
         default:
           break;
       }
@@ -1104,10 +1131,12 @@
         waitingActive: false,
         waitingText: "",
         llmConnecting: true,
+        answerBubbleShown: false,
       };
 
       ensureStreamingBubble();
-      setProgressWaiting("大模型连接中", true, streamState);
+      streamState.progressText = "正在连接大模型";
+      updateProgressDisplay(streamState);
 
       try {
         const res = await fetch(base + path, {
@@ -1144,7 +1173,11 @@
 
         endLlmConnecting(streamState);
         const answerText = streamState.answer || data.answer || data.message || "（无内容）";
-        if (answerText && !streamState.answer) showAnswerBubble();
+        if (answerText && !streamState.answerBubbleShown) {
+          const answerEl = ensureAnswerBubble(streamState);
+          streamState.answer = answerText;
+          if (answerEl) answerEl.textContent = answerText;
+        }
         renderStreamCharts(data.chart_artifacts || []);
 
         setProgressWaiting("", false, streamState);
@@ -1160,8 +1193,8 @@
               knowledge_chunks: data.knowledge_chunks,
               meta_hits: data.meta_hits,
             },
-            progress_text: streamState.progressText || streamState.planningThought || "",
-            planning_thought: streamState.planningThought || "",
+            progress_text: normalizeProgressText(streamState.progressText || streamState.planningThought || ""),
+            planning_thought: normalizeProgressText(streamState.planningThought || ""),
           },
         });
         saveChatToStorage();
