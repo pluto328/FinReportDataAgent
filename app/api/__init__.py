@@ -1,4 +1,4 @@
-﻿"""REST 路由层：参数校验 + Depends 转发，不含业务逻辑。
+"""REST 路由层：参数校验 + Depends 转发，不含业务逻辑。
 
 子模块与前缀：
 - doc_api.py   → /documents   文档上传/删除/刷新

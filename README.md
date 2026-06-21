@@ -192,14 +192,14 @@
 | 模块            | 能力                                                                          |
 | ------------- | --------------------------------------------------------------------------- |
 | **双轨入库**      | 文本 → ES + Chroma chunk；结构化 → 仅元数据索引；MD5 增量 + 软删除                            |
-| **文本混合检索**    | ES / BM25 / Dense 并行 + Reranker；`ENABLE_ES/BM25/DENSE` 消融                   |
+| **文本混合检索**    | ES + Dense 双通道并行，batch 内 min-max 归一化融合 + Reranker；`ENABLE_ES` / `ENABLE_DENSE` 消融 |
 | **元数据检索**     | MetaKeyword + MetaDense；返回含 `file_path` 的 `ScoredMetaRecord`                |
 | **Agent 流水线** | 7 图节点：3 LLM ReAct + 3 Tool 环 + 1 检索；`pending_tool` 统一调度                     |
 | **流式 SSE**    | `POST /search/stream`、`POST /report/stream` 推送思考、工具步骤与逐字回答                  |
 | **结构化处理**     | `data_processor` ↔ `data_tool`：读表 / 过滤 / 聚合 / SQL / pandas / `make_chart`   |
 | **报告与图表**     | `POST /report/stream` 或 `report_mode`；图表由 data tool 生成，reporter 插入 Markdown |
 | **多轮会话**      | 服务端 `session_history.json` + `load_history_context` 追问加载                    |
-| **评测体系**      | `gen_testset.py`、`rag_metric_eval.py`                                       |
+| **评测体系**      | `gen_testset.py`、`retrieval_weight_eval.py`（检索权重调优）                       |
 | **实时监听**      | `monitor.py` 监听 `raw_docs` + `raw_structured`                               |
 
 
@@ -244,7 +244,7 @@ Knowledge_Rag_System_Agent/
 │   │   │       ├── planner.py              # 规划节点：解析 LLM JSON → pending_tool
 │   │   │       ├── planning_tool.py          # 执行 plan 工具（load_history_context）
 │   │   │       ├── retriever.py              # 双路检索编排入口
-│   │   │       ├── retrieve_knowledge.py     # 知识库 chunk 检索（ES/BM25/Dense 融合）
+│   │   │       ├── retrieve_knowledge.py     # 知识库 chunk 检索（ES + Dense 融合）
 │   │   │       ├── retrieve_data.py          # 结构化元数据检索（keyword + dense）
 │   │   │       ├── data_processor.py         # 数据处理 LLM 决策循环
 │   │   │       ├── data_tool.py              # 执行 data 工具并写 processed 产物
@@ -276,9 +276,9 @@ Knowledge_Rag_System_Agent/
 │   │   ├── retrieval/                  # ── 检索与重排 ──
 │   │   │   ├── base.py                       # Retriever 协议
 │   │   │   ├── es_retriever.py               # Elasticsearch 全文
-│   │   │   ├── bm25_retriever.py             # 内存 BM25
 │   │   │   ├── dense_retriever.py            # Chroma 向量 chunk 检索
-│   │   │   ├── ensemble.py                   # 多路 chunk 分数融合
+│   │   │   ├── fusion.py                     # 各路 batch min-max 归一化 + 加权融合
+│   │   │   ├── ensemble.py                   # ES + Dense 多路 chunk 分数融合
 │   │   │   ├── meta_keyword_retriever.py     # 结构化表名/字段 keyword
 │   │   │   ├── meta_dense_retriever.py       # 结构化元数据向量检索
 │   │   │   ├── meta_ensemble.py              # 元数据双路融合
@@ -318,8 +318,11 @@ Knowledge_Rag_System_Agent/
 │           ├── data_processor_default.json
 │           └── reporter_default.json
 ├── eval/
-│   ├── gen_testset.py                  # 生成评测集
-│   └── rag_metric_eval.py              # RAG 指标评测
+│   ├── gen_testset.py                  # 随机抽样已入库 chunk，LLM 生成 query
+│   ├── retrieval_weight_eval.py        # ES/Dense 融合权重扫描 + Recall@5
+│   ├── retrieval_eval_utils.py         # 评测融合/归一化工具
+│   ├── 评测检索权重.md                   # 权重实验报告（脚本生成）
+│   └── rag_metric_eval.py              # 已弃用
 ├── frontend/
 │   └── index.html                      # 简易 SSE 聊天/报告前端
 ├── data/                               # ── 数据目录（运行时本地生成）──
@@ -482,8 +485,8 @@ poetry run python scripts/monitor.py
 | `scripts/check_docker_registry.py`           | 基础设施      | 探测 Docker Hub / elastic 镜像仓库 TCP 连通                   |
 | `scripts/reset_chroma_chunks.py`             | Chroma 维护 | 重建 `rag_collection` 并 smoke upsert（upsert 卡死/损坏恢复）    |
 | `scripts/test_chroma_upsert.py`              | Chroma 维护 | 批量 upsert 压测/诊断（建议停 uvicorn 后跑）                       |
-| `eval/gen_testset.py`                        | RAG 评测    | 从 `raw_docs` 用 LLM 自动生成问答评测集                          |
-| `eval/rag_metric_eval.py`                    | RAG 评测    | 对评测集跑 ES/BM25/Dense 消融并算 Recall@K                     |
+| `eval/gen_testset.py`                        | RAG 评测    | 从 ES 已入库 chunk 随机抽样，LLM 生成 query 评测集                  |
+| `eval/retrieval_weight_eval.py`              | RAG 评测    | ES/Dense 融合权重 0.1–0.9 扫描，输出 Recall@5 与最优权重报告          |
 
 
 ---
@@ -635,26 +638,44 @@ poetry run python scripts/test_chroma_upsert.py 8 --temp    # 隔离目录 data/
 
 ---
 
-### 7. RAG 消融评测 — `eval/`
+### 7. 检索权重评测 — `eval/`
 
-**目的**：自动生成评测集，对比 ES-only / BM25-only / Dense-only / 混合检索的 Recall@K。
+**目的**：在已入库文档上自动生成 query–chunk 配对评测集，扫描 ES / Dense 融合权重（与线上 `fusion.py` 一致：各路 top-k batch 内 min-max 归一化后加权），确定 `DENSE_WEIGHT` / `ES_WEIGHT` 推荐值。
+
+**前置**：Elasticsearch、Chroma HTTP、Embedding 可用；`data/raw_docs` 已通过 `monitor.py` 或 `/documents/sync` 完成入库。
 
 ```bash
-# 1. 扫描 data/raw_docs，每篇 PDF/文本生成 3 条 QA → eval/test_result/testset_*.json
+# 1. 从 ES 随机抽 100 个 online chunk，LLM 各生成 1 条检索 query
 poetry run python eval/gen_testset.py
+# 可选: --size 100 --seed 42
 
-# 2. 读取最新 testset，跑四种 scheme → eval/test_result/metrics_*.json
-poetry run python eval/rag_metric_eval.py
+# 2. 打分 + 权重扫描 + Recall@5，写入 eval/评测检索权重.md
+poetry run python eval/retrieval_weight_eval.py
+# 可选: --testset eval/test_result/testset_xxx.json
 ```
 
+| 步骤 | 脚本 | 说明 |
+| --- | --- | --- |
+| 生成评测集 | `gen_testset.py` | 输出 `eval/test_result/testset_{timestamp}.json`，含 `query` 与黄金 `chunk_id` |
+| 保存分数 | `retrieval_weight_eval.py` | 对每个 query，ES/Dense 各 `base_top_k=10`，取黄金 chunk 在 batch 内的归一化分 → `weight_eval_scores_*.json` |
+| 权重扫描 | 同上 | 向量权重 0.1–0.9（ES 权重 = 1 − 向量权重），算平均融合分，选最优 |
+| 召回评测 | 同上 | 各权重下双路 top-10 融合取 top-5，统计 Recall@5 |
 
-| 脚本                   | 输入                   | 输出                                          |
-| -------------------- | -------------------- | ------------------------------------------- |
-| `gen_testset.py`     | `data/raw_docs` 文本文件 | `eval/test_result/testset_{timestamp}.json` |
-| `rag_metric_eval.py` | 上述最新 testset         | `eval/test_result/metrics_{timestamp}.json` |
+| 输出 | 路径 |
+| --- | --- |
+| 评测集 | `eval/test_result/testset_*.json` |
+| 分数明细 | `eval/test_result/weight_eval_scores_*.json` |
+| **实验报告** | **`eval/评测检索权重.md`** |
 
+融合公式（与 `app/core/retrieval/fusion.py` 一致）：
 
-`rag_metric_eval.py` 内置 scheme：`full_hybrid`、`es_only`、`bm25_only`、`dense_only`（由 `ENABLE_ES` / `ENABLE_BM25` / `ENABLE_DENSE` 组合切换）。
+```
+norm_es   = min_max(es_scores in top-k batch)
+norm_dense = min_max(dense_scores in top-k batch)
+fused     = es_weight × norm_es + dense_weight × norm_dense
+```
+
+本实验不含 Reranker；线上最终检索还会在融合后做 cross-encoder 重排与 `MIN_RERANK_SCORE` 过滤。
 
 ---
 
