@@ -48,5 +48,5 @@ class MetaEnsembleRetriever:
             query,
             merged_list,
             self._settings.final_top_k,
-            min_score=self._settings.min_rerank_score,
+            min_score=0.0,
         )

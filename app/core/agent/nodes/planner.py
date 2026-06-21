@@ -102,12 +102,7 @@ async def planner_node(state: AgentState, runtime: AgentRuntime) -> dict:
 
     if plan_step >= max_steps:
         text_q, data_q, flags, description = apply_plan_flags({}, query, bool(state.get("report_mode")))
-        lowered = query.lower()
-        if any(k in lowered for k in ("csv", "xlsx", "table", "数据", "统计", "图表")):
-            flags.enable_data_retrieve = True
-            flags.enable_process = True
-            description = description or "读取并汇总结构化数据，按需绘制图表"
-        log.info("规划步数已达上限，使用兜底 enables", enables=_flags_line(flags))
+        log.info("规划步数已达上限，强制 action=done", enables=_flags_line(flags))
         out = {
             "text_query": text_q,
             "data_query": data_q,
@@ -116,11 +111,11 @@ async def planner_node(state: AgentState, runtime: AgentRuntime) -> dict:
             "plan_done": True,
             "pending_tool": None,
             "plan_context": summarize_plan_steps(plan_steps),
-            "status": "partial",
             **append_node(state, "planner"),
         }
         _apply_history_to_queries(out, plan_steps, query)
-        log.end(plan_done=True, status="partial", enables=_flags_line(flags))
+        log.info("生成 query 成功", text_query=text_q, data_query=data_q)
+        log.end(plan_done=True, enables=_flags_line(flags))
         return out
 
     prompt = build_planner_prompt(state, runtime)

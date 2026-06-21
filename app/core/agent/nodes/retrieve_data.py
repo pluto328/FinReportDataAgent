@@ -37,8 +37,7 @@ async def retrieve_data_node(state: AgentState, runtime: AgentRuntime) -> dict:
     log.info("正在检索结构化元数据", query=query)
     hits = await runtime.meta_retriever.search(query)
     paths = [h.record.file_path for h in hits if h.record.file_path]
-    min_score = runtime.settings.min_rerank_score
-    log.info("元数据检索完成", hit_count=len(hits), file_paths=paths, min_rerank_score=min_score)
+    log.info("元数据检索完成", hit_count=len(hits), file_paths=paths)
     log.end(hit_count=len(hits), paths=paths)
     return {
         "meta_hits": hits,
