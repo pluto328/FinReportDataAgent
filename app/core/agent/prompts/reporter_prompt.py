@@ -134,7 +134,7 @@ def build_reporter_prompt(
     return (
         f"问题:{state.get('user_query', '')}\n"
         f"规划结果:{json.dumps(plan_context, ensure_ascii=False)[:800]}\n"
-        f"数据处理结果摘要:{process_summary}\n"
+
         f"中间数据（文件名:描述）:\n{catalog_text}\n"
         f"已读取文件:{loaded_paths_text}\n"
         f"已读取数据内容:\n{loaded_data_text}\n"

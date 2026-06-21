@@ -13,7 +13,7 @@ class ReadDataFileTool(BaseTool):
     name = "read_data_file"
     description = (
         "读取会话中间数据或检索到的数据文件全文。"
-        "入参：path（填 catalog 中的文件名，如 liability_top5.csv；系统自动解析为绝对路径）。"
+        "入参：path（文件名，从中间数据中选取）。"
         "返回：content。"
     )
 
