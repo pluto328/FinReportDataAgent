@@ -19,7 +19,7 @@ from app.core.retrieval.reranker import Reranker
 from app.core.tools.registry import ToolRegistry, get_data_registry, get_plan_registry, get_report_registry
 from app.infrastructure.embedding_service import EmbeddingService
 from app.infrastructure.es_client import ESClient
-from app.infrastructure.llm_client import LLMClient
+from app.infrastructure.llm_client import LLMClient, build_role_llm_client
 from app.infrastructure.vector_client import VectorClient
 
 
@@ -45,6 +45,9 @@ class AppContainer:
         vectors = VectorClient(s)
         embed = EmbeddingService(s)
         llm = LLMClient(s)
+        llm_planner = build_role_llm_client(s, s.llm_model_planner)
+        llm_data = build_role_llm_client(s, s.llm_model_data)
+        llm_reporter = build_role_llm_client(s, s.llm_model_reporter)
         es_r = ESRetriever(es)
         dense = DenseRetriever(vectors, embed)
         reranker = Reranker(embed)
@@ -61,6 +64,9 @@ class AppContainer:
         runtime = AgentRuntime(
             settings=s,
             llm=llm,
+            llm_planner=llm_planner,
+            llm_data=llm_data,
+            llm_reporter=llm_reporter,
             text_retriever=text_retriever,
             meta_retriever=meta_retriever,
             plan_registry=plan_registry,

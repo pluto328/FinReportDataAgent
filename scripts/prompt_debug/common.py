@@ -12,7 +12,7 @@ from app.core.agent.nodes._debug_runtime import sample_state
 from app.core.agent.nodes._helpers import parse_llm_json
 from app.core.agent.state import AgentRuntime, AgentState
 from app.core.tools.registry import get_data_registry, get_plan_registry, get_report_registry
-from app.infrastructure.llm_client import LLMClient
+from app.infrastructure.llm_client import LLMClient, build_role_llm_client
 from app.schemas.query import ChatMessage
 from app.schemas.structured import NodeEnableFlags
 
@@ -46,6 +46,9 @@ def load_state(path: str | None, **overrides: Any) -> AgentState:
 def build_runtime() -> AgentRuntime:
     settings = get_settings()
     llm = LLMClient(settings)
+    llm_planner = build_role_llm_client(settings, settings.llm_model_planner)
+    llm_data = build_role_llm_client(settings, settings.llm_model_data)
+    llm_reporter = build_role_llm_client(settings, settings.llm_model_reporter)
     from app.core.retrieval.ensemble import EnsembleRetriever
     from app.core.retrieval.meta_ensemble import MetaEnsembleRetriever
 
@@ -56,6 +59,9 @@ def build_runtime() -> AgentRuntime:
     return AgentRuntime(
         settings=settings,
         llm=llm,
+        llm_planner=llm_planner,
+        llm_data=llm_data,
+        llm_reporter=llm_reporter,
         text_retriever=_Noop(),  # type: ignore[arg-type]
         meta_retriever=_Noop(),  # type: ignore[arg-type]
         plan_registry=get_plan_registry(),
