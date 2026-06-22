@@ -36,6 +36,10 @@
 
 **主链路：** 输入 → 规划 → 双路检索 → 数据处理（含 `make_chart`）→ 输出报表 / 答案
 
+系统包含 **3 个 LLM 角色**（`planner` / 数据处理 / `reporter`），其中 **planner** 与 **reporter** 共用下文 ReAct 描述；**数据处理** 由环境变量 `AGENT_PROCESS_MODE` 在 **ReAct** 与 **One-shot** 两种实现间切换（**当前默认 `one_shot`**，见下文平行章节）。
+
+### ReAct 模式（`AGENT_PROCESS_MODE=react`）
+
 系统包含 **3 个 LLM 节点**（`planner` / `data_processor` / `reporter`），各绑定一条 **LLM ↔ Tool** 循环；另有 1 个检索节点。
 
 ```
@@ -61,14 +65,49 @@
        Markdown 报告 / 答案 + 会话摘要落盘
 ```
 
-### 节点职责与 State
+### One-shot 模式（`AGENT_PROCESS_MODE=one_shot`，当前默认）
+
+与上文 ReAct 共用 **planner → retriever → reporter** 及 reporter 二次检索；**数据处理** 改为一次规划、批量执行，减少 `data_processor` ↔ `data_tool` 多轮 LLM。
+
+```
+（planner → retriever 同上）
+             │
+             ▼
+       process_planner（1× LLM → steps JSON）
+             │
+             ▼
+       process_fanout ──≥2 个 pandas_execute 时 Send 并行
+             ├── process_worker（并行）
+             └── process_executor（顺序 / 单步 / repair）
+             │
+             ▼
+       process_fanin（合并并行结果，执行剩余非 pandas 步骤）
+             │
+             ▼
+       chart_node（确定性 make_chart，非 LLM）
+             │
+             ▼
+       reporter（同上）
+```
+
+| 图节点 | 代码文件 | 说明 |
+| --- | --- | --- |
+| **process_planner** | `nodes/process_planner.py` | 一次 LLM 输出 `process_steps_plan`（JSON steps） |
+| **process_fanout / process_worker / process_fanin** | 同上目录 | LangGraph `Send` 并行多个 `pandas_execute` |
+| **process_executor** | `nodes/process_executor.py` | 执行 steps；失败时 1 次 LLM repair；超时见 `LLM_DECISION_TIMEOUT_SEC` |
+| **chart_node** | `nodes/chart_node.py` | 从 `pending_chart_params` 确定性绘图 |
+| **data_tool_runner** | `nodes/data_tool_runner.py` | 共享工具执行（写 catalog、产物），供 executor / worker 调用 |
+
+> ReAct 下的 `data_processor` / `data_tool` 在 one-shot 模式下**不进入**主路径；设置 `AGENT_PROCESS_MODE=react` 可恢复经典环。
+
+### 节点职责与 State（ReAct + 共用节点）
 
 
 | 图节点                | 代码文件                      | 类型   | Tool 循环           | 主要 State 更新                                                               |
 | ------------------ | ------------------------- | ---- | ----------------- | ------------------------------------------------------------------------- |
 | **planner**        | `nodes/planner.py`        | LLM  | ↔ `planning_tool` | `node_flags`、`text_query`、`data_query`、`data_process_plan`、`plan_context` |
 | **planning_tool**  | `nodes/planning_tool.py`  | Tool | —                 | `plan_steps`                                                              |
-| **retriever**      | `nodes/retriever.py`      | -    | —                 | `knowledge_chunks`、`data_file_paths`                                      |
+| **retriever**      | `nodes/retriever.py`      | -    | —                 | `knowledge_chunks`、`data_file_paths`；检索后自动加载 `file_previews`（两种模式共用） |
 | **data_processor** | `nodes/data_processor.py` | LLM  | ↔ `data_tool`     | `data_process_plan`、可选 replan                                             |
 | **data_tool**      | `nodes/data_tool.py`      | Tool | —                 | 写 session catalog、`chart_artifacts`、产物 `path`                             |
 | **reporter**       | `nodes/reporter.py`       | LLM  | ↔ `report_tool`   | `report_artifact`、`final_answer`、会话摘要持久化                                  |
@@ -90,6 +129,14 @@
 
 同一 `session_id` 的多轮请求会自动串联上下文，无需客户端自行拼摘要。
 
+### 检索分工（planner / reporter，两种模式共用）
+
+| 场景 | planner 首轮 | reporter 二次 |
+| --- | --- | --- |
+| 「龙虎榜第一的相关资料」等榜单/排名 | 仅 `enable_data_retrieve`；勿用榜单名称做知识检索 | 从处理结果得到公司名后 `retrieve_text` |
+| 已明确公司名 + 需要研报/新闻 | `enable_knowledge_retrieve` + `text_query` | 文档足够则 `done` |
+| 仅要结构化排序（如负债前五） | 数据检索 + 处理；知识检索可关 | 一般无需二次文本检索 |
+
 ---
 
 ## LLM 节点与 Tool 绑定
@@ -98,9 +145,11 @@
 
 - **planner**：纯 ReAct（观测 `plan_steps` 历史）
 - **data_processor**：ReAct + 高层 `data_process_plan`；支持 `action=replan` 根据工具成功/失败动态调整目标
-- **reporter**：单次 prompt 统一决策与成稿；`action=call_tool|retrieve_text|retrieve_data|done`；检索/调工具时 `answer`/`report`/`summary` 留空，`done` 时一次性输出
+- **reporter**：单次 prompt 统一决策与成稿；`action=call_tool|retrieve_text|retrieve_data|done`；检索/调工具时 `answer`/`report`/`summary` 留空，`done` 时一次性输出；prompt 内自动注入**已处理数据全量**（`CONTEXT_SIZE_THRESHOLD_CHARS` 截断），一般无需 `read_data_file`
 
-状态字段：`pending_tool`（`PendingToolCall`）、`plan_done` / `process_done` / `report_done`、`*_steps` 历史列表；中间数据 catalog **不在 AgentState**，由 `process_artifact_store` 按 `session_id` 读写。
+**One-shot 数据处理（补充）：** 不使用 `data_processor` ReAct 环；`process_planner` 单次输出 steps → `process_executor` / `process_worker` 经 `data_tool_runner` 执行工具；`make_chart` 由 `chart_node` 确定性调用。失败时 executor 内 1 次 repair LLM（`LLM_DECISION_TIMEOUT_SEC` 超时则跳过）。
+
+状态字段：`pending_tool`（`PendingToolCall`）、`plan_done` / `process_done` / `report_done`、`*_steps` 历史列表；one-shot 另含 `process_steps_plan`、`pending_chart_params`；中间数据 catalog **不在 AgentState**，由 `process_artifact_store` 按 `session_id` 读写。
 
 ### planner → `plan_registry`（`app/core/tools/plan/`）
 
@@ -129,8 +178,8 @@
 - 目录：`{CACHE_PATH}/{session_id}/processed/`
 - 命名：`{原文件名}_processed{原后缀}`（图表可为 `_processed.png` / `_processed.csv`）
 - 全局 catalog：`{CACHE_PATH}/{session_id}/intermediate_data_catalog.json`，记录 `{绝对路径: artifact_description}`
-- **写入时机**：仅 `data_tool` 节点在 `data_filter` / `sql_execute` / `pandas_execute` / `make_chart` 成功落盘后调用 `register_session_artifacts`；`preview_read` 不写 catalog
-- **读取时机**：`planner` / `data_processor` / `reporter` prompt 通过 `get_session_catalog(session_id)` 注入「路径:描述」
+- **写入时机**：`data_tool` 节点（ReAct）或 `data_tool_runner`（one-shot 的 executor / worker）在 `data_filter` / `sql_execute` / `pandas_execute` / `make_chart` 成功落盘后调用 `register_session_artifacts`；`preview_read` 不写 catalog
+- **读取时机**：`planner` / `data_processor`（ReAct）/ `process_planner`（one-shot）/ `reporter` prompt 通过 `get_session_catalog(session_id)` 注入「路径:描述」
 - `data_processor` LLM 在 `params.artifact_description` 中填写产物说明（prompt 与工具 catalog 均要求必填）
 - 新会话（API `new_session: true`）清空 processed 目录与 catalog
 
@@ -168,9 +217,18 @@
 | `done`          | 结束循环                           | 非报告：`answer` + `summary`；报告模式：`answer` 固定「详见报告」+ `report` + `summary` |
 
 
-补充检索须避免重复 query 与已命中来源；由 reporter 设置 `retrieval_from_reporter`，检索后跳过 `data_processor` 直接回 reporter。
+补充检索须避免重复 query 与已命中来源；由 reporter 设置 `retrieval_from_reporter`。`retrieve_text` 完成后直接回 reporter；`retrieve_data` 且 `enable_process=true` 时 ReAct 回 `data_processor`、one-shot 回 `process_planner`，否则回 reporter。
 
-步数上限：`MAX_PLAN_TOOL_STEPS`、`MAX_PROCESS_TOOL_STEPS`、`MAX_REPORT_TOOL_STEPS`。
+步数上限：`MAX_PLAN_TOOL_STEPS`、`MAX_PROCESS_TOOL_STEPS`、`MAX_REPORT_TOOL_STEPS`；图递归上限 50（`runner.py`）。
+
+### 三阶段分模型（可选，两种模式共用）
+
+| 环境变量 | 用途 | 回退 |
+| --- | --- | --- |
+| `LLM_MODEL` | 默认模型 | — |
+| `LLM_MODEL_PLANNER` | planner | `LLM_MODEL` |
+| `LLM_MODEL_DATA` | process_planner / repair / react 下 data_processor | `LLM_MODEL` |
+| `LLM_MODEL_REPORTER` | reporter | `LLM_MODEL` |
 
 ---
 
@@ -181,7 +239,8 @@
 | ------------------ | ----------------------------------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------- |
 | **planner**        | 判断新话题 / 追问；调用 plan tool；确定链路开关与 query；描述数据处理需求  | `user_query`、`session_id`、已执行 `plan_steps`  | JSON：`action`、`tool_name`/`enable`_*、`text_query`、`data_query`、`data_process_plan` |
 | **data_processor** | 按需求逐步调用 data tool；含 SQL / pandas / 绘图；支持 replan | `data_process_plan`、session catalog、tool 历史 | JSON：`action`（含 `replan`）、`tool_name`、`params`（落盘工具必填 `artifact_description`）      |
-| **reporter**       | 整合上下文；可选读文件 / 补充检索；一次输出答案或报告                    | 问题、`data_process_plan`、catalog、文档片段、tool 历史 | 统一 JSON（见上）；报告写 `report.md`                                                        |
+| **process_planner** | （one-shot）一次输出完整 steps JSON | `file_previews`、catalog、用户需求 | JSON `steps` 数组 |
+| **reporter**       | 整合上下文；可选读文件 / 补充检索；一次输出答案或报告                    | 已处理数据全量、文档片段、catalog | 统一 JSON（见上）；报告写 `report.md`                                                        |
 
 
 ---
@@ -194,9 +253,9 @@
 | **双轨入库**      | 文本 → ES + Chroma chunk；结构化 → 仅元数据索引；MD5 增量 + 软删除                            |
 | **文本混合检索**    | ES + Dense 双通道并行，batch 内 min-max 归一化融合 + Reranker；`ENABLE_ES` / `ENABLE_DENSE` 消融 |
 | **元数据检索**     | MetaKeyword + MetaDense；返回含 `file_path` 的 `ScoredMetaRecord`                |
-| **Agent 流水线** | 7 图节点：3 LLM ReAct + 3 Tool 环 + 1 检索；`pending_tool` 统一调度                     |
+| **Agent 流水线** | ReAct：7 图节点（3 LLM ReAct + 3 Tool 环 + 1 检索）；One-shot（默认）：扩展 process_* / chart_node，数据处理 LLM 轮次更少 |
 | **流式 SSE**    | `POST /search/stream`、`POST /report/stream` 推送思考、工具步骤与逐字回答                  |
-| **结构化处理**     | `data_processor` ↔ `data_tool`：读表 / 过滤 / 聚合 / SQL / pandas / `make_chart`   |
+| **结构化处理**     | ReAct：`data_processor` ↔ `data_tool`；One-shot：`process_planner` → executor / 并行 worker |
 | **报告与图表**     | `POST /report/stream` 或 `report_mode`；图表由 data tool 生成，reporter 插入 Markdown |
 | **多轮会话**      | 服务端 `session_history.json` + `load_history_context` 追问加载                    |
 | **评测体系**      | `gen_testset.py`、`retrieval_weight_eval.py`（检索权重调优）                       |
@@ -230,30 +289,37 @@ Knowledge_Rag_System_Agent/
 │   │   └── report_api.py               # /report/stream SSE 报告模式
 │   ├── core/
 │   │   ├── agent/                      # ── LangGraph Agent 主链路 ──
-│   │   │   ├── graph.py                # 7 节点 StateGraph 编译与条件边
-│   │   │   ├── state.py                # AgentState、AgentRuntime、NodeFlags
-│   │   │   ├── runner.py               # run_agent_stream：建图、加载 catalog、SSE 驱动
+│   │   │   ├── graph.py                # StateGraph 编译与条件边（ReAct + one-shot 路由）
+│   │   │   ├── state.py                # AgentState、AgentRuntime、分角色 LLM
+│   │   │   ├── runner.py               # run_agent_stream；recursion_limit=50
 │   │   │   ├── events.py               # ProgressEmitter、invoke_llm_decision/report
 │   │   │   ├── llm_capture.py          # CAPTURE_LLM_IO=1 时落盘 prompt/输出
 │   │   │   ├── query_guard.py          # 查询长度与敏感词守卫
 │   │   │   ├── prompts/
-│   │   │   │   ├── planner_prompt.py       # 规划 LLM：是否检索/处理/报告、工具选择
-│   │   │   │   ├── data_processor_prompt.py # 数据处理 LLM：步骤与 artifact_description
-│   │   │   │   └── reporter_prompt.py      # 报告 LLM：统一 JSON（action + answer/report/summary）
+│   │   │   │   ├── planner_prompt.py           # 规划 LLM（两种模式共用）
+│   │   │   │   ├── planner_domain_knowledge.py # 金融术语与检索分工常识
+│   │   │   │   ├── data_processor_prompt.py    # ReAct 数据处理
+│   │   │   │   ├── data_process_one_shot_prompt.py  # one-shot steps / repair
+│   │   │   │   └── reporter_prompt.py          # 报告 LLM（已处理数据全量注入）
 │   │   │   └── nodes/
-│   │   │       ├── planner.py              # 规划节点：解析 LLM JSON → pending_tool
-│   │   │       ├── planning_tool.py          # 执行 plan 工具（load_history_context）
-│   │   │       ├── retriever.py              # 双路检索编排入口
-│   │   │       ├── retrieve_knowledge.py     # 知识库 chunk 检索（ES + Dense 融合）
-│   │   │       ├── retrieve_data.py          # 结构化元数据检索（keyword + dense）
-│   │   │       ├── data_processor.py         # 数据处理 LLM 决策循环
-│   │   │       ├── data_tool.py              # 执行 data 工具并写 processed 产物
-│   │   │       ├── reporter.py               # 报告 LLM 循环、持久化 session 轮次
-│   │   │       ├── report_tool.py            # 执行 read_data_file 等 report 工具
-│   │   │       ├── _routes.py                # 各节点后条件路由（phase → 下一节点）
-│   │   │       ├── _helpers.py               # LLM JSON 解析、状态补丁
-│   │   │       ├── _node_log.py              # 节点 INFO 结构化日志
-│   │   │       └── _debug_runtime.py         # prompt_debug 脚本用 sample_state
+│   │   │       ├── planner.py              # 规划节点
+│   │   │       ├── planning_tool.py        # load_history_context
+│   │   │       ├── retriever.py            # 双路检索 + 自动 file_previews
+│   │   │       ├── process_planner.py      # [one-shot] 一次规划 steps
+│   │   │       ├── process_executor.py     # [one-shot] 执行 + repair
+│   │   │       ├── process_worker.py       # [one-shot] Send 并行 worker
+│   │   │       ├── chart_node.py           # [one-shot] 确定性 make_chart
+│   │   │       ├── data_tool_runner.py     # [one-shot] 共享工具执行
+│   │   │       ├── retrieve_knowledge.py   # 知识库 chunk 检索
+│   │   │       ├── retrieve_data.py        # 结构化元数据检索
+│   │   │       ├── data_processor.py       # [react] 数据处理 LLM 决策循环
+│   │   │       ├── data_tool.py            # [react] 执行 data 工具
+│   │   │       ├── reporter.py             # 报告 LLM、二次检索
+│   │   │       ├── report_tool.py          # read_data_file
+│   │   │       ├── _routes.py              # 条件路由（process_entry_node）
+│   │   │       ├── _helpers.py             # JSON 解析、全量产物加载等
+│   │   │       ├── _node_log.py            # 节点 INFO 结构化日志
+│   │   │       └── _debug_runtime.py       # prompt_debug 用 sample_state
 │   │   ├── session/                    # ── 会话持久化 ──
 │   │   │   ├── history_store.py            # parsed_cache/{id}/session_history.json
 │   │   │   └── process_artifact_store.py   # intermediate_data_catalog + processed/ 路径
@@ -293,13 +359,14 @@ Knowledge_Rag_System_Agent/
 │       ├── es_client.py                      # Elasticsearch 封装
 │       ├── vector_client.py                  # Chroma HTTP / 本地持久化
 │       ├── embedding_service.py              # bge-m3 向量化
-│       ├── llm_client.py                     # OpenAI 兼容 LLM 流式调用
+│       ├── llm_client.py                     # OpenAI 兼容 LLM；build_role_llm_client 分角色
 │       ├── hf_hub_config.py                  # HF_HOME / 镜像配置
 │       ├── chroma_bootstrap.py               # Chroma collection 初始化
 │       ├── chroma_lock.py                    # 本地 Chroma 文件锁
 │       └── chroma_telemetry.py               # 关闭 Chroma 遥测
 ├── scripts/
 │   ├── monitor.py                      # watchdog 监听 raw_docs + raw_structured → sync
+│   ├── benchmark_llm.py                # 各角色模型延迟 / JSON 有效率对比
 │   ├── run_query_capture_llm.py        # E2E 跑一条 query 并捕获 LLM I/O
 │   ├── score_chunk_query.py            # 单 query chunk 打分调试
 │   ├── reset_chroma_chunks.py          # 清空 Chroma chunk collection
@@ -403,7 +470,10 @@ poetry run python scripts/monitor.py
 
 | 变量                                                          | 说明                            | 默认                            |
 | ----------------------------------------------------------- | ----------------------------- | ----------------------------- |
-| `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL`                | LLM 配置                        | —                             |
+| `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL`                | LLM 默认配置                        | —                             |
+| `LLM_MODEL_PLANNER` / `LLM_MODEL_DATA` / `LLM_MODEL_REPORTER` | 规划 / 数据处理 / 报告分模型（空则回退 `LLM_MODEL`） | 空 |
+| `AGENT_PROCESS_MODE`                                        | `one_shot`（默认）或 `react`        | `one_shot`                    |
+| `LLM_DECISION_TIMEOUT_SEC`                                  | process_planner / repair LLM 超时   | `120`                         |
 | `ES_HOST` / `ES_USER` / `ES_PASSWORD`                       | Elasticsearch                 | 对齐 compose                    |
 | `CHROMA_USE_HTTP` / `CHROMA_HTTP_HOST` / `CHROMA_HTTP_PORT` | Chroma Docker HTTP            | `true` / `127.0.0.1` / `8001` |
 | `CACHE_PATH`                                                | 解析缓存 + **会话历史**               | `./data/parsed_cache`         |
@@ -412,7 +482,7 @@ poetry run python scripts/monitor.py
 | `MAX_PROCESS_TOOL_STEPS`                                    | data_processor ↔ data_tool    | `20`                          |
 | `MAX_REPORT_TOOL_STEPS`                                     | reporter ↔ report_tool        | `5`                           |
 | `MAX_RETRIEVAL_ROUNDS`                                      | reporter 二次检索上限               | `3`                           |
-| `CONTEXT_SIZE_THRESHOLD_CHARS`                              | read_data_file 默认截断           | `12000`                       |
+| `CONTEXT_SIZE_THRESHOLD_CHARS`                              | reporter 已处理数据全量 / read_data_file 截断 | `12000`                       |
 | `ENABLE_ES` / `ENABLE_BM25` / `ENABLE_DENSE`                | 文本检索消融                        | 均为 `true`                     |
 | `ENABLE_AGENT_NODE_LOG` / `AGENT_NODE_LOG_LEVEL`            | Agent 节点全流程日志（START/END/关键步骤） | `true` / `INFO`               |
 
@@ -475,6 +545,7 @@ poetry run python scripts/monitor.py
 | -------------------------------------------- | --------- | ----------------------------------------------------- |
 | `scripts/monitor.py`                         | 入库运维      | 监听 `raw_docs` / `raw_structured` 变更并增量同步到 ES + Chroma |
 | `scripts/run_query_capture_llm.py`           | Agent E2E | 不启 FastAPI，跑完整 Agent 并落盘全部 LLM prompt/输出              |
+| `scripts/benchmark_llm.py`                   | LLM 基准  | 对比各角色模型 TTFT / 延迟 / JSON 有效率                          |
 | `scripts/prompt_debug/run_planner.py`        | Prompt 单测 | 隔离调试 planner 提示词与 LLM 响应                              |
 | `scripts/prompt_debug/run_data_processor.py` | Prompt 单测 | 隔离调试 data_processor 提示词                               |
 | `scripts/prompt_debug/run_reporter.py`       | Prompt 单测 | 隔离调试 reporter 统一 prompt                               |
@@ -709,7 +780,7 @@ flowchart TB
 
 
 
-### LangGraph Agent（7 节点）
+### LangGraph Agent（ReAct，7 节点）
 
 ```mermaid
 flowchart TD
@@ -735,6 +806,27 @@ flowchart TD
     retriever -->|retrieval_from_reporter| reporter
     reporter --> END([报告 / 答案 + 摘要落盘])
 ```
+
+### LangGraph Agent（One-shot 扩展，当前默认）
+
+```mermaid
+flowchart TD
+    START([输入 prompt]) --> planner
+    planner --> retriever
+    retriever --> process_planner
+    process_planner --> process_fanout
+    process_fanout --> process_worker
+    process_fanout --> process_executor
+    process_worker --> process_fanin
+    process_fanin --> chart_node
+    process_executor --> chart_node
+    chart_node --> reporter
+    reporter -->|retrieve| retriever
+    retriever --> reporter
+    reporter --> END([报告 / 答案])
+```
+
+> 实际编译图为**单一 StateGraph**：`retriever` 后由 `process_entry_node()` 按 `AGENT_PROCESS_MODE` 分流至 `process_planner`（one-shot）或 `data_processor`（react）。
 
 
 
