@@ -239,14 +239,17 @@ def summarize_report_steps(steps: list[ReportStepResult]) -> dict[str, Any]:
 
 
 def _sanitize_preview_rows(rows: list[Any]) -> list[dict[str, Any]]:
+    from app.core.tools.artifact_utils import json_safe
+
     cleaned: list[dict[str, Any]] = []
     for item in rows[:FILE_PREVIEW_STORE_ROWS]:
         if isinstance(item, dict):
-            cleaned.append(item)
+            cleaned.append(json_safe(item))
     return cleaned
 
 
 def load_preview_rows_from_path(path: str, *, rows: int = FILE_PREVIEW_STORE_ROWS) -> list[dict[str, Any]]:
+    from app.core.tools.artifact_utils import preview_dataframe_rows
     from app.core.tools.structured_ops import read_table_preview
 
     text = str(path or "").strip()
@@ -254,7 +257,7 @@ def load_preview_rows_from_path(path: str, *, rows: int = FILE_PREVIEW_STORE_ROW
         return []
     try:
         df = read_table_preview(text, rows=rows)
-        return _sanitize_preview_rows(df.to_dict(orient="records"))
+        return preview_dataframe_rows(df, rows=rows)
     except Exception:
         return []
 
@@ -336,6 +339,86 @@ def format_file_previews_for_prompt(
         desc = entry.description or "无描述"
         lines.append(f"- {name}|{desc}:\n{preview_text}")
     return "\n".join(lines)
+
+
+def collect_processed_artifact_paths(
+    state: AgentState,
+    settings: Settings | None = None,
+) -> list[tuple[str, str]]:
+    """Processed artifact paths (catalog / refs / tool outputs), excluding raw previews."""
+    from app.core.session.process_artifact_store import get_session_catalog, resolve_catalog_path
+
+    s = settings or get_settings()
+    session_id = state.get("session_id", "")
+    extra = [str(p) for p in (state.get("data_file_paths") or []) if p]
+    extra.extend(str(p) for p in (state.get("processed_data_refs") or []) if p)
+    seen: set[str] = set()
+    out: list[tuple[str, str]] = []
+
+    def add(raw: str, desc: str = "") -> None:
+        text = str(raw or "").strip()
+        if not text:
+            return
+        resolved = resolve_catalog_path(session_id, text, s, extra_paths=extra) or text
+        if resolved in seen or not Path(resolved).exists():
+            return
+        seen.add(resolved)
+        out.append((resolved, desc))
+
+    for path, desc in get_session_catalog(session_id, s).items():
+        add(path, desc)
+    for ref in state.get("processed_data_refs") or []:
+        add(str(ref))
+    for ref in state.get("processed_data") or []:
+        path = getattr(ref, "path", None) or (ref.get("path") if isinstance(ref, dict) else None)
+        if path:
+            add(str(path))
+    for step in state.get("data_tool_steps") or []:
+        if step.error:
+            continue
+        artifact = step.artifact_ref
+        if artifact and artifact.path:
+            add(artifact.path)
+    return out
+
+
+def format_processed_data_full_for_prompt(
+    state: AgentState,
+    settings: Settings | None = None,
+) -> tuple[str, list[str]]:
+    """Load full processed artifact text for reporter; truncate by context_size_threshold_chars."""
+    from app.core.tools.artifact_utils import load_artifact_text
+
+    s = settings or get_settings()
+    items = collect_processed_artifact_paths(state, s)
+    if not items:
+        return "（无已处理数据产物）", []
+    max_total = s.context_size_threshold_chars
+    per_file = max(max_total // len(items), 1000)
+    blocks: list[str] = []
+    loaded_paths: list[str] = []
+    used = 0
+    for path, desc in items:
+        remaining = max_total - used
+        if remaining <= 0:
+            blocks.append(
+                f"#### {Path(path).name}\n（已达上下文字符上限 {max_total}，后续文件已省略）"
+            )
+            break
+        cap = min(per_file, remaining)
+        try:
+            text = load_artifact_text(path, max_chars=cap)
+            truncated = len(text) >= cap
+            name = Path(path).name
+            label = f"{name} ({desc})" if desc else name
+            if truncated:
+                label += f" [已截断至 {cap} 字符]"
+            blocks.append(f"#### {label}\n{text}")
+            used += len(text)
+            loaded_paths.append(path)
+        except OSError as exc:
+            blocks.append(f"#### {Path(path).name}: 读取失败 {exc}")
+    return "\n\n".join(blocks), loaded_paths
 
 
 def format_data_tool_history(steps: list[DataToolStepResult]) -> str:
@@ -506,7 +589,8 @@ def is_data_process_plan_complete(state: AgentState) -> bool:
             if chart_pending and flags and flags.enable_chart:
                 planned.add("make_chart")
             return planned.issubset(executed)
-        return bool(state.get("data_tool_steps"))
+        # React loop (data_tool): without a plan, wait for LLM action=done.
+        return False
     flags = state.get("node_flags")
     enable_chart = bool(flags and flags.enable_chart)
     previews = state.get("file_previews") or {}
@@ -518,21 +602,15 @@ def is_data_process_plan_complete(state: AgentState) -> bool:
 
 
 def reporter_has_preloaded_data(state: AgentState) -> bool:
-    previews = normalize_file_previews(state.get("file_previews"))
-    if not previews:
-        return False
+    from app.config.settings import get_settings
+
+    if collect_processed_artifact_paths(state, get_settings()):
+        return True
     steps = state.get("data_tool_steps") or []
-    if not steps:
-        return False
-    for s in steps:
-        if s.error:
-            continue
-        if s.tool_name in {"pandas_execute", "sql_execute", "data_filter"}:
-            return True
-    for name in previews:
-        if name.endswith(".csv") and "原始数据预览" not in (previews[name].description or ""):
-            return True
-    return False
+    return any(
+        not s.error and s.tool_name in {"pandas_execute", "sql_execute", "data_filter"}
+        for s in steps
+    )
 
 
 def data_tool_catalog(runtime: AgentRuntime) -> str:
