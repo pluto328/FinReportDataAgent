@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+import asyncio
 
 from app.core.agent.events import emit_progress_waiting, invoke_llm_decision
 from app.core.agent.nodes._helpers import append_node
@@ -30,13 +30,21 @@ async def process_planner_node(state: AgentState, runtime: AgentRuntime) -> dict
     log.start(file_count=len(paths))
     prompt = build_data_process_one_shot_prompt(state, runtime)
     await emit_progress_waiting("正在规划数据处理", active=True)
-    raw = await invoke_llm_decision(
-        runtime.llm_for_data(),
-        prompt,
-        phase="process_planner",
-        emit_thinking=False,
-    )
-    await emit_progress_waiting(active=False)
+    raw = ""
+    try:
+        raw = await asyncio.wait_for(
+            invoke_llm_decision(
+                runtime.llm_for_data(),
+                prompt,
+                phase="process_planner",
+                emit_thinking=False,
+            ),
+            timeout=runtime.settings.llm_decision_timeout_sec,
+        )
+    except asyncio.TimeoutError:
+        log.info("规划 LLM 超时", timeout_sec=runtime.settings.llm_decision_timeout_sec)
+    finally:
+        await emit_progress_waiting(active=False)
 
     steps = parse_one_shot_steps(raw, file_paths=list(paths))
     if not steps:

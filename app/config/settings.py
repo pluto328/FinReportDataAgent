@@ -149,6 +149,11 @@ class Settings(BaseSettings):
     processed_data_preview_rows: int = Field(default=5, ge=1)
     structured_query_max_rows: int = Field(default=5000, ge=1)
     chart_task_timeout_sec: int = Field(default=120, ge=1)
+    llm_decision_timeout_sec: int = Field(
+        default=120,
+        ge=10,
+        description="Timeout for planner/process repair/reporter LLM decision calls (seconds)",
+    )
 
     # finalized after validation; not loaded from env
     path_manager: PathManager | None = Field(default=None, exclude=True)

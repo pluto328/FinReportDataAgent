@@ -56,11 +56,21 @@ def build_data_process_repair_prompt(
     failed_step: dict[str, Any],
     error: str,
 ) -> str:
-    base = build_data_process_one_shot_prompt(state, runtime)
+    file_paths = list(state.get("data_file_paths") or [])
+    meta_text = format_meta_columns_for_prompt(state.get("meta_hits") or [])
+    previews_text = format_file_previews_for_prompt(state.get("file_previews"), display_rows=5)
+    failed_json = json.dumps(failed_step, ensure_ascii=False)[:2000]
     return (
-        f"{base}\n"
-        f"上一步失败: tool={failed_step.get('tool')} error={error}\n"
-        f"请仅输出修正后的 steps JSON（可只含失败步骤的修正版）。\n"
+        "你是数据处理修正器。上一步工具执行失败，请仅输出修正后的 steps JSON，不要其它文字。\n"
+        '{"steps":[{"tool":"pandas_execute|sql_execute|data_filter","params":{...}}]}\n'
+        "规则：禁止 preview_read；params 须含 artifact_name、artifact_description；"
+        "pandas 多文件变量 df/df2/…；根据错误信息修正列名或代码。\n"
+        f"用户需求:{user_require_text(state)}\n"
+        f"失败步骤:{failed_json}\n"
+        f"错误:{str(error)[:800]}\n"
+        f"检索到的数据文件:\n{_format_retrieved_files(file_paths)}\n"
+        f"元数据列信息:\n{meta_text}\n"
+        f"数据预览(节选):\n{previews_text}\n"
     )
 
 
