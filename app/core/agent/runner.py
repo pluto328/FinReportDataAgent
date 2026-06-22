@@ -15,6 +15,8 @@ from app.config.settings import get_settings
 from app.dependencies import AppContainer
 from app.schemas.query import SearchRequest, SearchResponse
 
+AGENT_RECURSION_LIMIT = 50
+
 
 def _build_initial_state(request: SearchRequest) -> AgentState:
     session_id = request.session_id or ""
@@ -91,7 +93,10 @@ async def run_agent_stream(
     initial = _build_initial_state(request)
     token = set_emitter(emitter)
     try:
-        final = await graph.ainvoke(initial)
+        final = await graph.ainvoke(
+            initial,
+            config={"recursion_limit": AGENT_RECURSION_LIMIT},
+        )
     finally:
         reset_emitter(token)
         saved = finalize_capture()

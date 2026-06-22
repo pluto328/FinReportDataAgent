@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import io
 import json
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+import pandas as pd
 
 from app.core.agent.state import AgentRuntime, AgentState
 from app.schemas.structured import (
@@ -295,6 +298,28 @@ def upsert_file_preview(
     return merged
 
 
+def _preview_rows_to_csv(rows: list[dict[str, Any]], *, display_rows: int) -> str:
+    sliced = [r for r in rows[:display_rows] if isinstance(r, dict)]
+    if not sliced:
+        return "（无有效列）"
+    df = pd.DataFrame.from_records(sliced)
+    if df.empty:
+        return "（无有效列）"
+    df = df.replace("", pd.NA).dropna(axis=1, how="all")
+    if df.empty:
+        return "（无有效列）"
+    for col in df.columns:
+        non_null = df[col].notna()
+        if not non_null.any():
+            continue
+        numeric = pd.to_numeric(df[col], errors="coerce")
+        if numeric[non_null].notna().all():
+            df[col] = numeric.round(0).map(lambda x: "" if pd.isna(x) else str(int(x)))
+    buf = io.StringIO()
+    df.to_csv(buf, index=False)
+    return buf.getvalue().rstrip()
+
+
 def format_file_previews_for_prompt(
     previews: dict[str, FilePreviewEntry] | dict[str, dict[str, Any]] | None,
     *,
@@ -305,10 +330,9 @@ def format_file_previews_for_prompt(
         return "（暂无）"
     lines: list[str] = []
     for name, entry in normalized.items():
-        rows = entry.preview_rows[:display_rows]
-        preview_text = json.dumps(rows, ensure_ascii=False, default=str)
+        preview_text = _preview_rows_to_csv(entry.preview_rows, display_rows=display_rows)
         desc = entry.description or "无描述"
-        lines.append(f"- {name}|{desc}: {preview_text}")
+        lines.append(f"- {name}|{desc}:\n{preview_text}")
     return "\n".join(lines)
 
 

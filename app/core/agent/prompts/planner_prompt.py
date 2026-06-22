@@ -70,20 +70,19 @@ def build_planner_prompt(
         "你是企业知识库咨询系统的流程规划器。需要理解用户真实需求，确定后续流程。\n"
         "按以下固定格式输出 JSON，不要输出任何其他内容。'#'后为填写规则：\n"
         '{"planning_thought":"",#必填，用 1-3 句中文描述规划思路，句式以「用户让我…」或「用户想咨询…」开头，接着写「我需要先…再…」（可继续「然后…」）\n'
-        '"action":"",#必填，若下一步调用工具，则填：call_tool；若用户需求已明确，则填：done。'
-        f"可调用 plan 工具:\n{tool_catalog_block}\n"
+        '"action":"",#不明确用户需求，或包含刚才/那么/上述/那么等上下文强相关，则填：call_tool；若用户需求已明确，则填：done。'
         f"{entry_rules}"
         '；否则填：done\n'
+        '"tool_name":"load_history_context",#当action=call_tool时，填load_history_context。\n'
         '"user_require":"",#必填，推测的用户完整真实任务意图，不复述原话，表述更精确。\n'
-        '"text_query":"",\n#仅当 enable_knowledge_retrieve 为 true 时填写（检索扩写词，填具体需求的金融强相关词，不得填语气词或关联词）；为 false 时 text_query 必须为空字符串。\n'
-        '"data_query":"",\n#仅当 enable_data_retrieve 为 true 时填写（数据检索词，填具体需求的金融强相关词，不得填语气词或关联词）；为 false 时 data_query 必须为空字符串。\n'
+        '"text_query":"",\n#文档查询检索语句，要求能尽量根据用户需求检索到相关文档，仅当 enable_knowledge_retrieve 为 true 时填写；为 false 时 text_query 必须为空字符串。\n'
+        '"data_query":"",\n#数据查询检索语句，根据用户意图推测需要用来处理的原始数据，生成查询关键词，仅当 enable_data_retrieve 为 true 时填写；为 false 时 data_query 必须为空字符串。\n'
         '"enable_knowledge_retrieve":"","#必填，是否需要知识检索，填true或false。\n'
         '"enable_data_retrieve":"","#必填，是否需要数据检索，填true或false。\n'
         '"enable_process":"","#必填，是否需要数据处理，填true或false。\n'
         '"enable_chart":"","#必填，是否需要图表生成，填true或false。\n'
         '"enable_report":"","#必填，是否需要报告生成，填true或false。\n'
-        '"tool_name":"",#当action=call_tool时，填下一步调用工具的名称，否则为空字符串。\n'
-        '"params":{},#当action=call_tool时，填下一步调用工具的参数，否则为空对象。\n'
+        '"params":"",#不用填\n'
         '}\n'
         "已知信息:\n"
         f"用户问题:{query}\n"

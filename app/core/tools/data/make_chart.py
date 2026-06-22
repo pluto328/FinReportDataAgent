@@ -19,7 +19,6 @@ class MakeChartTool(BaseTool):
         "入参：file_path（绝对路径）、chart_type（table|line|bar）、x_axis、y_axis、title、"
         "artifact_name（必填，保存文件名含后缀，如 chart_top5.png，不与已有中间数据文件名重复）、"
         "artifact_description（必填，图表中文说明，如「负债榜前五名柱状图」）。"
-        "返回：path（保存后的绝对路径）。"
     )
 
     async def run(self, **kwargs: Any) -> dict[str, Any]:

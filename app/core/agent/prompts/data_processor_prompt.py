@@ -43,12 +43,10 @@ def build_data_processor_prompt(
     tool_catalog = data_tool_catalog(runtime)
     retrieved_files_text = _format_retrieved_files(file_paths)
     tool_rules = """
-    preview_read 仅用于检索到的原始数据，不用于中间数据。入参 file_paths（绝对路径列表，可同时预览多个文件）；仅预览单个文件时也可填 file_path。预览结果写入「已预览数据」，需预览多个文件时一次 call_tool 传齐 file_paths，不要多次单独 preview。
-    sql_execute 与 pandas_execute 使用 file_paths（绝对路径列表），可同时处理多个检索到的原始数据文件或 session 中间产物；file_paths 只能从「检索到的数据文件」或「已知数据记录」中选取，禁止编造尚未生成的路径。
     SQL 多文件时表名：src（第1个）、src2（第2个）、src3（第3个）…；pandas 多文件时变量名：df（第1个）、df2（第2个）、df3（第3个）…。
     生成pandas代码或sql代码需要尽量一步到位，不要多次连续调用pandas_execute或连续调用sql_execute。
-    逻辑复杂，则生成pandas代码后使用pandas_execute（code 禁止 import、pd.read_*、任何注释 #，直接使用 df/df2/…/pd/np，结果赋给 result 或写回 df）。
-    需 SQL 查询，则调用 sql_execute（sql 禁止任何注释 -- 或 /* */，仅 SELECT 语句正文）。
+    make_chart 只允许调用一次。
+
     """
 
     force_line = ""
@@ -56,35 +54,30 @@ def build_data_processor_prompt(
         force_line = f"已达最大 data tool 步数({max_steps})，必须 action=done，禁止 call_tool 与 replan。\n"
 
     plan_empty = not str(data_process_plan or "").strip()
-    initial_replan_line = ""
-    if plan_empty and not prior_steps and not force_no_tool:
-        initial_replan_line = (
-            "【首次进入】data_process_plan 为空：必须先 action=replan，"
-            "结合检索到的数据文件与用户需求填写 data_process_plan（分点、每点一个操作）；"
-            "禁止此步 call_tool 或 done。\n"
-        )
+
 
     return (
         "你是数据处理规划+执行器。需要跟据现有文件和用户需求,调用工具进行数据处理。\n"
         "按以下固定格式输出 JSON，不要输出任何其他内容。'#'后为填写规则：\n"
-        '{"action":"call_tool|done|replan",#必填，下一步调用工具，则填：call_tool；若已知数据已满足要求则填：done；若当前data_process_plan为空或需要更改，则填：replan。\n'
+        '{"action":"call_tool|done|replan",#必填，下一步调用工具，则填：call_tool；若已知数据已满足要求则填：done；若当前data_process_plan为空则填：replan。\n'
         '"tool_name":"",#当action=call_tool时，填下一步调用工具的名称。'
-        f"可调用 data 工具:\n{tool_catalog}\n"
+        f"可调用 data 工具说明:\n{tool_catalog}\n"
         "调用工具规则为：\n"
         f"{tool_rules}"
         '"params":{},#当action=call_tool时，填下一步调用工具的参数\n'
-        '"data_process_plan":""#当action=replan时，根据用户真实需求，保证能满足需求的前提下，尽量使步骤最少。填新的数据处理计划，按顺序分点描述，每个点只描述一个独立操作，避免和/并之类的描述。\n'
+        '"data_process_plan":""#当action=replan时，根据用户真实需求，保证能满足需求的前提下，尽量使步骤最少。按顺序分点描述，每个点只描述一个独立操作，避免和/并之类的描述。pandas一次可以处理多张表，产生汇总表。\n'
         '}\n'
         "已知信息:\n"
         f"用户需求:{user_require_text(state)}\n"
         f"data_process_plan:\n{data_process_plan}\n"
         f"检索到的数据文件:\n{retrieved_files_text}\n"
         f"中间数据记录（文件名:描述）:\n{catalog_text}\n"
-        f"工具调用历史({current_step}/{max_steps}):\n{history_text}\n"
         f"已预览数据(文件名|描述|预览):\n{previews_text}\n"
-        f"{initial_replan_line}"
+        f"工具调用历史({current_step}/{max_steps}):\n{history_text}\n"
         f"{force_line}"
-        "严格按照data_process_plan执行下一步。参照工具调用历史明确现在载哪一步。若最新步骤返回为 error，根据 error 调整工具入参重试；同一工具连续两次 error 则换工具重试。再次确认能否满足用户需求，如果不行则启动replan，不得轻易启动\n"
+        "严格按照data_process_plan执行下一步。参照工具调用历史明确现在载哪一步。"
+        "若最新步骤返回为 error，根据 error 调整工具入参重试；同一工具连续两次 error 则换工具重试。"
+        "不得轻易启动replan，除非确定当前步骤有错误\n"
 
     )
 
