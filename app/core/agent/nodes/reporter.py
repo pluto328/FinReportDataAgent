@@ -8,6 +8,8 @@ from app.core.agent.events import invoke_llm_decision
 from app.core.agent.nodes._debug_runtime import print_node_result, sample_state, stub_runtime
 from app.core.agent.nodes._helpers import (
     append_node,
+    is_one_shot_mode,
+    reporter_has_preloaded_data,
     summarize_data_tool_steps,
     summarize_plan_steps,
     summarize_report_steps,
@@ -129,7 +131,7 @@ async def _finalize_from_parsed(
     final_status = state.get("status", "ok")
     answer = parsed.get("answer") or parsed.get("report") or ""
     if not summary:
-        summary = await _fallback_summary(runtime.llm, answer, user_require_text(state))
+        summary = await _fallback_summary(runtime.llm_for_reporter(), answer, user_require_text(state))
     await _persist_turn(state, runtime, answer=answer, answer_summary=summary)
     log.info("回答生成成功", answer_len=len(answer))
     log.end(report_done=True, status=final_status, answer_len=len(answer))
@@ -213,7 +215,11 @@ async def reporter_node(state: AgentState, runtime: AgentRuntime) -> dict:
             **append_node(state, "reporter"),
         }
 
-    force_done = report_step >= max_report_steps or bool(state.get("report_done"))
+    force_done = (
+        report_step >= max_report_steps
+        or bool(state.get("report_done"))
+        or (report_step == 0 and reporter_has_preloaded_data(state))
+    )
     stream_field = "answer"
 
     parsed: dict = {}
@@ -230,7 +236,7 @@ async def reporter_node(state: AgentState, runtime: AgentRuntime) -> dict:
         else:
             log.debug("调用 LLM", report_step=report_step, force_done=force_done, stream_field=stream_field)
         raw = await invoke_llm_decision(
-            runtime.llm,
+            runtime.llm_for_reporter(),
             prompt,
             phase="reporter",
             stream_field=stream_field if attempt == 0 else None,
@@ -312,7 +318,10 @@ async def reporter_node(state: AgentState, runtime: AgentRuntime) -> dict:
             "retrieval_from_reporter": True,
             "supplemental_retrieve_knowledge": False,
             "supplemental_retrieve_data": True,
-            "after_reporter_retrieval_goto": "data_processor" if enable_process_flag else "reporter",
+            "after_reporter_retrieval_goto": (
+                "process_planner" if enable_process_flag and is_one_shot_mode(state=state) else
+                ("data_processor" if enable_process_flag else "reporter")
+            ),
             "node_flags": new_flags,
             "report_context": _append_supplemental_queries(report_context, data_q=data_q),
             "pending_tool": None,

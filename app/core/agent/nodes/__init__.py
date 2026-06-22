@@ -1,18 +1,27 @@
-"""LangGraph agent nodes — planner / retriever / data_processor / reporter + tool exec nodes."""
+"""LangGraph agent nodes — planner / retriever / process / reporter + tool exec nodes."""
 
 from app.core.agent.nodes._routes import (
+    route_after_chart_node,
     route_after_data_processor,
     route_after_data_tool,
     route_after_planner,
     route_after_planning_tool,
+    route_after_process_executor,
+    route_after_process_fanin,
+    route_after_process_planner,
     route_after_report_tool,
     route_after_reporter,
     route_after_retriever,
+    route_process_fanout,
 )
+from app.core.agent.nodes.chart_node import chart_node
 from app.core.agent.nodes.data_processor import data_processor_node, debug_data_processor_node
 from app.core.agent.nodes.data_tool import data_tool_node, debug_data_tool_node
 from app.core.agent.nodes.planner import debug_planner_node, planner_node
 from app.core.agent.nodes.planning_tool import debug_planning_tool_node, planning_tool_node
+from app.core.agent.nodes.process_executor import process_executor_node, process_fanin_node
+from app.core.agent.nodes.process_planner import process_planner_node
+from app.core.agent.nodes.process_worker import process_worker_node
 from app.core.agent.nodes.report_tool import debug_report_tool_node, report_tool_node
 from app.core.agent.nodes.reporter import debug_reporter_node, reporter_node
 from app.core.agent.nodes.retriever import debug_retriever_node, retriever_node
@@ -20,6 +29,7 @@ from app.core.agent.nodes.retrieve_data import debug_retrieve_data_node, retriev
 from app.core.agent.nodes.retrieve_knowledge import debug_retrieve_knowledge_node, retrieve_knowledge_node
 
 __all__ = [
+    "chart_node",
     "data_processor_node",
     "data_tool_node",
     "debug_data_processor_node",
@@ -33,16 +43,25 @@ __all__ = [
     "debug_retrieve_knowledge_node",
     "planner_node",
     "planning_tool_node",
+    "process_executor_node",
+    "process_fanin_node",
+    "process_planner_node",
+    "process_worker_node",
     "report_tool_node",
     "reporter_node",
     "retriever_node",
     "retrieve_data_node",
     "retrieve_knowledge_node",
+    "route_after_chart_node",
     "route_after_data_processor",
     "route_after_data_tool",
     "route_after_planner",
     "route_after_planning_tool",
+    "route_after_process_executor",
+    "route_after_process_fanin",
+    "route_after_process_planner",
     "route_after_report_tool",
     "route_after_reporter",
     "route_after_retriever",
+    "route_process_fanout",
 ]

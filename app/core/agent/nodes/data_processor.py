@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from pathlib import Path
+
 from app.core.agent.events import emit_progress_waiting, invoke_llm_decision
 from app.core.agent.nodes._debug_runtime import print_node_result, sample_state, stub_runtime
 from app.core.agent.nodes._helpers import append_node, summarize_data_tool_steps
@@ -73,7 +75,7 @@ async def data_processor_node(state: AgentState, runtime: AgentRuntime) -> dict:
     log.debug("调用 LLM 决定数据处理步骤", process_step=current_step)
     await emit_progress_waiting("正在规划数据处理", active=True)
     raw = await invoke_llm_decision(
-        runtime.llm, prompt, phase="data_processor", emit_thinking=False
+        runtime.llm_for_data(), prompt, phase="data_processor", emit_thinking=False
     )
     await emit_progress_waiting(active=False)
     parsed = parse_data_processor_response(
@@ -87,12 +89,18 @@ async def data_processor_node(state: AgentState, runtime: AgentRuntime) -> dict:
     params = parsed["params"]
     new_plan = parsed["data_process_plan"]
     plan_empty = not str(state.get("data_process_plan") or "").strip()
+    previews = state.get("file_previews") or {}
+    paths = state.get("data_file_paths") or []
+    previews_loaded = bool(paths) and all(Path(p).name in previews for p in paths if p)
 
-    if plan_empty and not prior_steps and not force_no_tool and action in ("call_tool", "done"):
-        log.info("data_process_plan 为空，强制改为 replan")
-        action = "replan"
-        tool_name = ""
-        params = {}
+    if plan_empty and not prior_steps and not force_no_tool:
+        if previews_loaded:
+            log.info("预览已自动加载，跳过 replan，等待 LLM 直接 call_tool")
+        else:
+            log.info("data_process_plan 为空，强制改为 replan")
+            action = "replan"
+            tool_name = ""
+            params = {}
 
     if force_no_tool and action in ("call_tool", "replan"):
         log.info("数据处理步数已达上限，忽略 {}", action)

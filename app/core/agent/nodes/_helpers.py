@@ -24,6 +24,8 @@ from app.schemas.structured import (
 
 if TYPE_CHECKING:
     from app.config.settings import Settings
+else:
+    from app.config.settings import Settings
 
 _SINGLE_PATH_TOOLS = frozenset({"data_filter", "make_chart"})
 _MULTI_PATH_TOOLS = frozenset({"sql_execute", "pandas_execute", "preview_read"})
@@ -412,6 +414,125 @@ def plan_tool_catalog(runtime: AgentRuntime) -> str:
         if tool:
             lines.append(f"- {tool.name}: {tool.description}")
     return "\n".join(lines) if lines else "（无）"
+
+
+def is_one_shot_mode(settings: Settings | None = None, state: AgentState | None = None) -> bool:
+    if settings is not None:
+        return getattr(settings, "agent_process_mode", "one_shot") == "one_shot"
+    if state is not None:
+        from app.config.settings import get_settings
+
+        return get_settings().agent_process_mode == "one_shot"
+    return True
+
+
+def process_entry_node(state: AgentState) -> str:
+    from app.config.settings import get_settings
+
+    if is_one_shot_mode(get_settings()):
+        return "process_planner"
+    return "data_processor"
+
+
+def load_file_previews_for_paths(
+    paths: list[str],
+    existing: dict[str, FilePreviewEntry | dict[str, Any]] | None = None,
+) -> dict[str, FilePreviewEntry]:
+    merged = normalize_file_previews(existing)
+    for path in paths:
+        text = str(path or "").strip()
+        if not text:
+            continue
+        name = Path(text).name
+        if name in merged:
+            continue
+        rows = load_preview_rows_from_path(text)
+        merged = upsert_file_preview(
+            merged,
+            file_name=name,
+            path=text,
+            description="原始数据预览",
+            preview_rows=rows,
+        )
+    return merged
+
+
+def format_meta_columns_for_prompt(meta: list, *, limit: int = 8) -> str:
+    if not meta:
+        return "（暂无元数据列信息）"
+    lines: list[str] = []
+    for m in meta[:limit]:
+        name = m.record.file_name or Path(str(m.record.file_path or "")).name
+        text = (m.record.search_text or "")[:300]
+        lines.append(f"- {name}: {text}")
+    return "\n".join(lines)
+
+
+def expected_tools_from_plan(
+    plan: str,
+    *,
+    enable_chart: bool,
+    skip_preview: bool,
+) -> set[str]:
+    tools: set[str] = set()
+    text = str(plan or "")
+    lower = text.lower()
+    if not skip_preview and ("预览" in text or "preview" in lower):
+        tools.add("preview_read")
+    if any(k in lower or k in text for k in ("pandas", "排序", "筛选", "提取", "汇总")):
+        tools.add("pandas_execute")
+    if "sql" in lower:
+        tools.add("sql_execute")
+    if enable_chart and any(k in text for k in ("图", "chart", "绘制", "柱状")):
+        tools.add("make_chart")
+    if not tools and text.strip():
+        tools.add("pandas_execute")
+    return tools
+
+
+def completed_tool_names(steps: list[DataToolStepResult]) -> set[str]:
+    return {s.tool_name for s in steps if not s.error}
+
+
+def is_data_process_plan_complete(state: AgentState) -> bool:
+    plan = str(state.get("data_process_plan") or "").strip()
+    if not plan:
+        steps_plan = state.get("process_steps_plan") or []
+        if steps_plan:
+            executed = completed_tool_names(state.get("data_tool_steps") or [])
+            planned = {str(s.get("tool", "")) for s in steps_plan if s.get("tool")}
+            chart_pending = state.get("pending_chart_params")
+            flags = state.get("node_flags")
+            if chart_pending and flags and flags.enable_chart:
+                planned.add("make_chart")
+            return planned.issubset(executed)
+        return bool(state.get("data_tool_steps"))
+    flags = state.get("node_flags")
+    enable_chart = bool(flags and flags.enable_chart)
+    previews = state.get("file_previews") or {}
+    file_paths = state.get("data_file_paths") or []
+    skip_preview = bool(file_paths) and all(Path(p).name in previews for p in file_paths if p)
+    expected = expected_tools_from_plan(plan, enable_chart=enable_chart, skip_preview=skip_preview)
+    done = completed_tool_names(state.get("data_tool_steps") or [])
+    return expected.issubset(done)
+
+
+def reporter_has_preloaded_data(state: AgentState) -> bool:
+    previews = normalize_file_previews(state.get("file_previews"))
+    if not previews:
+        return False
+    steps = state.get("data_tool_steps") or []
+    if not steps:
+        return False
+    for s in steps:
+        if s.error:
+            continue
+        if s.tool_name in {"pandas_execute", "sql_execute", "data_filter"}:
+            return True
+    for name in previews:
+        if name.endswith(".csv") and "原始数据预览" not in (previews[name].description or ""):
+            return True
+    return False
 
 
 def data_tool_catalog(runtime: AgentRuntime) -> str:

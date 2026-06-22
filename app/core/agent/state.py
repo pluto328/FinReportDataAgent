@@ -38,6 +38,10 @@ class AgentState(TypedDict, total=False):
     text_query: str
     data_query: str
     data_process_plan: str
+    process_steps_plan: list[dict[str, Any]]
+    pending_chart_params: dict[str, Any] | None
+    process_repair_attempted: bool
+    worker_step: dict[str, Any] | None
     node_flags: NodeEnableFlags
     report_mode: bool
     session_id: str
@@ -93,3 +97,15 @@ class AgentRuntime:
     plan_registry: ToolRegistry
     data_registry: ToolRegistry
     report_registry: ToolRegistry
+    llm_planner: LLMClient | None = None
+    llm_data: LLMClient | None = None
+    llm_reporter: LLMClient | None = None
+
+    def llm_for_planner(self) -> LLMClient:
+        return self.llm_planner or self.llm
+
+    def llm_for_data(self) -> LLMClient:
+        return self.llm_data or self.llm
+
+    def llm_for_reporter(self) -> LLMClient:
+        return self.llm_reporter or self.llm

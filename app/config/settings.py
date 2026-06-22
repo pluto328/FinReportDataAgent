@@ -18,6 +18,7 @@ from app.config.paths import (
 
 RetrieverName = Literal["es", "dense"]
 MetaRetrieverName = Literal["keyword", "dense"]
+AgentProcessMode = Literal["react", "one_shot"]
 
 
 class Settings(BaseSettings):
@@ -57,7 +58,23 @@ class Settings(BaseSettings):
     llm_base_url: str = Field(default="")
     llm_api_key: str = Field(default="")
     llm_model: str = Field(default="")
+    llm_model_planner: str = Field(
+        default="",
+        description="Optional model for task planner; falls back to llm_model",
+    )
+    llm_model_data: str = Field(
+        default="",
+        description="Optional lighter model for data one-shot planning; falls back to llm_model",
+    )
+    llm_model_reporter: str = Field(
+        default="",
+        description="Optional model for reporter; falls back to llm_model",
+    )
     llm_temperature: float = Field(default=0.1, ge=0.0, le=2.0)
+    agent_process_mode: AgentProcessMode = Field(
+        default="one_shot",
+        description="react: ReAct data_processor loop; one_shot: single LLM plan then execute",
+    )
 
     # --- embedding & rerank ---
     embed_model_name: str = Field(default="BAAI/bge-m3")

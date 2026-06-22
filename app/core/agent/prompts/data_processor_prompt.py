@@ -46,6 +46,7 @@ def build_data_processor_prompt(
     SQL 多文件时表名：src（第1个）、src2（第2个）、src3（第3个）…；pandas 多文件时变量名：df（第1个）、df2（第2个）、df3（第3个）…。
     生成pandas代码或sql代码需要尽量一步到位，不要多次连续调用pandas_execute或连续调用sql_execute。
     make_chart 只允许调用一次。
+    原始文件预览已自动加载到「已预览数据」，禁止 call_tool preview_read。
 
     """
 
