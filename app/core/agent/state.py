@@ -31,6 +31,20 @@ from app.schemas.structured import (
 from app.config.settings import Settings
 
 
+def _merge_file_previews(
+    left: dict[str, FilePreviewEntry] | None,
+    right: dict[str, FilePreviewEntry] | None,
+) -> dict[str, FilePreviewEntry]:
+    merged = dict(left or {})
+    if right:
+        merged.update(right)
+    return merged
+
+
+def _merge_max_int(left: int | None, right: int | None) -> int:
+    return max(left or 0, right or 0)
+
+
 class AgentState(TypedDict, total=False):
     user_query: str
     user_require: str
@@ -66,10 +80,10 @@ class AgentState(TypedDict, total=False):
 
     process_result: dict[str, Any]
     process_done: bool
-    process_step: int
+    process_step: Annotated[int, _merge_max_int]
     max_process_tool_steps: int
     data_tool_steps: Annotated[list[DataToolStepResult], operator.add]
-    file_previews: dict[str, FilePreviewEntry]
+    file_previews: Annotated[dict[str, FilePreviewEntry], _merge_file_previews]
     processed_data: Annotated[list[ProcessedDataRef], operator.add]
     processed_data_refs: Annotated[list[str], operator.add]
     chart_artifacts: Annotated[list[ChartArtifact], operator.add]

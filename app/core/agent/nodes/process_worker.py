@@ -30,5 +30,16 @@ async def process_worker_node(state: AgentState, runtime: AgentRuntime) -> dict:
         step_no=step_no,
     )
     log.end(tool_name=tool_name, success=patch.get("success"), step=step_no)
-    out: dict[str, Any] = {**append_node(state, "process_worker"), **patch}
+    # Parallel Send workers must not write process_result/process_step (LangGraph single-value keys).
+    safe_keys = frozenset({
+        "data_tool_steps",
+        "processed_data",
+        "processed_data_refs",
+        "chart_artifacts",
+        "file_previews",
+    })
+    out: dict[str, Any] = {
+        **append_node(state, "process_worker"),
+        **{k: v for k, v in patch.items() if k in safe_keys},
+    }
     return out
