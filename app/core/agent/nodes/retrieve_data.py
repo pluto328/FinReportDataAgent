@@ -17,7 +17,7 @@ import asyncio
 from app.core.agent.nodes._debug_runtime import print_node_result, sample_state, stub_runtime
 from app.core.agent.nodes._helpers import append_node
 from app.core.agent.nodes._node_log import node_logger
-from app.core.agent.state import AgentRuntime, AgentState
+from app.core.agent.state import AgentRuntime, AgentState, dedupe_scored_meta
 
 
 async def retrieve_data_node(state: AgentState, runtime: AgentRuntime) -> dict:
@@ -35,7 +35,7 @@ async def retrieve_data_node(state: AgentState, runtime: AgentRuntime) -> dict:
     query = state.get("data_query") or state.get("user_query", "")
     log.start(query=query, enabled=True)
     log.info("正在检索结构化元数据", query=query)
-    hits = await runtime.meta_retriever.search(query)
+    hits = dedupe_scored_meta(await runtime.meta_retriever.search(query))
     paths = [h.record.file_path for h in hits if h.record.file_path]
     log.info("元数据检索完成", hit_count=len(hits), file_paths=paths)
     log.end(hit_count=len(hits), paths=paths)

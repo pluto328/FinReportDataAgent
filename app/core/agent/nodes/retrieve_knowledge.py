@@ -17,7 +17,7 @@ import asyncio
 from app.core.agent.nodes._debug_runtime import print_node_result, sample_state, stub_runtime
 from app.core.agent.nodes._helpers import append_node
 from app.core.agent.nodes._node_log import node_logger
-from app.core.agent.state import AgentRuntime, AgentState
+from app.core.agent.state import AgentRuntime, AgentState, dedupe_scored_chunks
 
 
 async def retrieve_knowledge_node(state: AgentState, runtime: AgentRuntime) -> dict:
@@ -35,7 +35,7 @@ async def retrieve_knowledge_node(state: AgentState, runtime: AgentRuntime) -> d
     query = state.get("text_query") or state.get("user_query", "")
     log.start(query=query, enabled=True)
     log.info("正在查询文档", query=query)
-    hits = await runtime.text_retriever.search(query)
+    hits = dedupe_scored_chunks(await runtime.text_retriever.search(query))
     min_score = runtime.settings.min_rerank_score
     log.info("文档检索完成", count=len(hits), min_rerank_score=min_score)
     log.end(count=len(hits), query=query)

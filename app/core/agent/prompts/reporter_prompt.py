@@ -15,7 +15,7 @@ from app.core.agent.nodes._helpers import (
     summarize_plan_steps,
     user_require_text,
 )
-from app.core.agent.state import AgentRuntime, AgentState
+from app.core.agent.state import AgentRuntime, AgentState, dedupe_scored_chunks, dedupe_scored_meta
 from app.core.session.process_artifact_store import (
     format_intermediate_catalog_for_agent,
     get_session_catalog,
@@ -24,27 +24,29 @@ from app.core.session.process_artifact_store import (
 
 
 def _format_document_chunks(chunks: list, *, limit: int = 8, content_len: int = 400) -> str:
-    if not chunks:
+    unique = dedupe_scored_chunks(chunks)
+    if not unique:
         return "（暂无文档片段）"
     lines: list[str] = []
-    for i, c in enumerate(chunks[:limit], 1):
+    for i, c in enumerate(unique[:limit], 1):
         src = c.chunk.source_file or c.chunk.doc_id or "unknown"
         lines.append(f"{i}. [{src}] {c.chunk.content[:content_len]}")
-    if len(chunks) > limit:
-        lines.append(f"... 共 {len(chunks)} 条，仅展示前 {limit} 条")
+    if len(unique) > limit:
+        lines.append(f"... 共 {len(unique)} 条，仅展示前 {limit} 条")
     return "\n".join(lines)
 
 
 def _format_meta_hits(meta: list, *, limit: int = 8) -> str:
-    if not meta:
+    unique = dedupe_scored_meta(meta)
+    if not unique:
         return "（暂无结构化元数据命中）"
     lines: list[str] = []
-    for i, m in enumerate(meta[:limit], 1):
+    for i, m in enumerate(unique[:limit], 1):
         name = m.record.file_name or m.record.file_path
         preview = (m.record.search_text or "")[:200]
         lines.append(f"{i}. [{name}] {preview}")
-    if len(meta) > limit:
-        lines.append(f"... 共 {len(meta)} 条，仅展示前 {limit} 条")
+    if len(unique) > limit:
+        lines.append(f"... 共 {len(unique)} 条，仅展示前 {limit} 条")
     return "\n".join(lines)
 
 
@@ -82,11 +84,11 @@ def _format_retrieval_history(state: AgentState) -> str:
         lines.append(f"- 已补充文本检索: {q}")
     for q in ctx.get("supplemental_data_queries") or []:
         lines.append(f"- 已补充数据检索: {q}")
-    chunks = state.get("knowledge_chunks") or []
+    chunks = dedupe_scored_chunks(state.get("knowledge_chunks") or [])
     sources = sorted({c.chunk.source_file for c in chunks if c.chunk.source_file})
     if sources:
         lines.append(f"- 已命中文档来源: {', '.join(sources[:30])}")
-    meta = state.get("meta_hits") or []
+    meta = dedupe_scored_meta(state.get("meta_hits") or [])
     files = sorted({m.record.file_name or m.record.file_path for m in meta if m.record.file_name or m.record.file_path})
     if files:
         lines.append(f"- 已命中结构化文件: {', '.join(files[:30])}")
@@ -100,8 +102,8 @@ def build_reporter_prompt(
     force_done: bool = False,
     skip_read_data_file: bool = False,
 ) -> str:
-    chunks = state.get("knowledge_chunks") or []
-    meta = state.get("meta_hits") or []
+    chunks = dedupe_scored_chunks(state.get("knowledge_chunks") or [])
+    meta = dedupe_scored_meta(state.get("meta_hits") or [])
     report_steps = state.get("report_steps") or []
     report_step = state.get("report_step", 0)
     max_report_steps = state.get("max_report_tool_steps", runtime.settings.max_report_tool_steps)

@@ -45,6 +45,76 @@ def _merge_max_int(left: int | None, right: int | None) -> int:
     return max(left or 0, right or 0)
 
 
+def _chunk_dedup_key(chunk: ScoredChunk) -> str:
+    cid = str(chunk.chunk.chunk_id or "").strip()
+    if cid:
+        return cid
+    src = str(chunk.chunk.source_file or chunk.chunk.doc_id or "").strip()
+    idx = chunk.chunk.chunk_index
+    content_sig = hash(chunk.chunk.content[:240])
+    return f"{src}:{idx}:{content_sig}"
+
+
+def _merge_knowledge_chunks(
+    left: list[ScoredChunk] | None,
+    right: list[ScoredChunk] | None,
+) -> list[ScoredChunk]:
+    by_key: dict[str, ScoredChunk] = {}
+    for item in (left or []) + (right or []):
+        key = _chunk_dedup_key(item)
+        prev = by_key.get(key)
+        if prev is None or item.score > prev.score:
+            by_key[key] = item
+    return list(by_key.values())
+
+
+def _meta_dedup_key(record: ScoredMetaRecord) -> str:
+    path = str(record.record.file_path or "").strip()
+    if path:
+        return path.lower()
+    asset = str(record.record.asset_id or "").strip()
+    if asset:
+        return asset
+    name = str(record.record.file_name or "").strip()
+    return name.lower() if name else str(id(record))
+
+
+def _merge_meta_hits(
+    left: list[ScoredMetaRecord] | None,
+    right: list[ScoredMetaRecord] | None,
+) -> list[ScoredMetaRecord]:
+    by_key: dict[str, ScoredMetaRecord] = {}
+    for item in (left or []) + (right or []):
+        key = _meta_dedup_key(item)
+        prev = by_key.get(key)
+        if prev is None or item.score > prev.score:
+            by_key[key] = item
+    return list(by_key.values())
+
+
+def _merge_unique_paths(left: list[str] | None, right: list[str] | None) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in (left or []) + (right or []):
+        path = str(raw or "").strip()
+        if not path:
+            continue
+        key = path.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(path)
+    return out
+
+
+def dedupe_scored_chunks(chunks: list[ScoredChunk]) -> list[ScoredChunk]:
+    return _merge_knowledge_chunks([], chunks)
+
+
+def dedupe_scored_meta(meta: list[ScoredMetaRecord]) -> list[ScoredMetaRecord]:
+    return _merge_meta_hits([], meta)
+
+
 class AgentState(TypedDict, total=False):
     user_query: str
     user_require: str
@@ -60,9 +130,9 @@ class AgentState(TypedDict, total=False):
     report_mode: bool
     session_id: str
 
-    knowledge_chunks: Annotated[list[ScoredChunk], operator.add]
-    meta_hits: Annotated[list[ScoredMetaRecord], operator.add]
-    data_file_paths: Annotated[list[str], operator.add]
+    knowledge_chunks: Annotated[list[ScoredChunk], _merge_knowledge_chunks]
+    meta_hits: Annotated[list[ScoredMetaRecord], _merge_meta_hits]
+    data_file_paths: Annotated[list[str], _merge_unique_paths]
     retrieval_round: int
     max_retrieval_rounds: int
     need_more_retrieval: bool
