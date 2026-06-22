@@ -147,7 +147,8 @@ def build_reporter_prompt(
         f"规划结果:{json.dumps(plan_context, ensure_ascii=False)[:800]}\n"
 
         f"中间数据（文件名:描述）:\n{catalog_text}\n"
-
+        f"已处理数据预览(CSV):\n{previews_text}\n"
+        f"处理摘要:\n{process_summary}\n"
         f"已读取文件:{loaded_paths_text}\n"
         f"已读取数据内容:\n{loaded_data_text}\n"
         f"文档片段:\n{doc_text}\n"
@@ -162,6 +163,7 @@ def build_reporter_prompt(
         "2. 若仍需补充知识文本检索，action=retrieve_text 并填写 text_query（须避免与已检索记录重复）；"
         "不得填写 data_query、enable_process、enable_chart。\n"
         "3. 需求需要读取中间文件回答时，action=call_tool，tool_name=read_data_file，params.path 填中间数据文件名；"
+        "若「已处理数据预览(CSV)」已含所需数据，禁止 read_data_file，直接 action=done。\n"
         "4. 信息已足够时 action=done，并填写 answer 与 summary。\n"
         "5. action 为 retrieve_text、retrieve_data 或 call_tool 时，answer、summary 必须均为空字符串。\n"
         "6. action 为 done 时：根据用户需求、已处理数据给出专业金融分析建议，并作适当拓展，填入 answer；summary 填 2-3 句摘要。\n"

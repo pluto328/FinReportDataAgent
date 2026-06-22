@@ -7,6 +7,7 @@ from pathlib import Path
 
 from app.core.agent.events import emit_node_start, emit_progress_line, emit_progress_waiting
 from app.core.agent.nodes._debug_runtime import print_node_result, sample_state, stub_runtime
+from app.core.agent.nodes._helpers import load_file_previews_for_paths
 from app.core.agent.nodes._node_log import node_logger
 from app.core.agent.nodes.retrieve_data import retrieve_data_node
 from app.core.agent.nodes.retrieve_knowledge import retrieve_knowledge_node
@@ -73,6 +74,14 @@ async def retriever_node(state: AgentState, runtime: AgentRuntime) -> dict:
             retrieved_names.add(Path(name).name)
     for name in sorted(retrieved_names):
         await emit_progress_line(f"检索到：{name}")
+    file_paths = merged.get("data_file_paths") or []
+    if file_paths and enable_data:
+        paths = [str(p) for p in file_paths if p]
+        previews = await asyncio.to_thread(
+            load_file_previews_for_paths, paths, state.get("file_previews")
+        )
+        merged["file_previews"] = previews
+        log.info("自动加载数据预览", files=len(previews))
     log.info("检索汇总", knowledge_chunks=k_count, data_files=d_count)
     log.end(knowledge_chunks=k_count, data_files=d_count)
     return merged
