@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import re
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from app.config.settings import Settings, get_settings
@@ -14,6 +16,36 @@ from app.core.session.process_artifact_store import get_session_catalog, process
 from app.schemas.structured import DataProcessMode, ProcessedDataRef
 
 _UNSAFE_FILENAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+
+def json_safe(value: Any) -> Any:
+    """Convert pandas/numpy/datetime values to JSON-serializable Python types."""
+    if isinstance(value, dict):
+        return {str(k): json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_safe(v) for v in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (dt.datetime, dt.date, dt.time)):
+        return value.isoformat()
+    if isinstance(value, (pd.Timestamp, pd.Timedelta)):
+        return value.isoformat()
+    if isinstance(value, pd.Period):
+        return str(value)
+    if isinstance(value, np.datetime64):
+        return str(value)
+    if isinstance(value, np.generic):
+        return json_safe(value.item())
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return str(value)
+
+
+def safe_json_dumps(obj: Any, **kwargs: Any) -> str:
+    return json.dumps(json_safe(obj), ensure_ascii=False, **kwargs)
 
 
 def sanitize_artifact_name(name: str) -> str:
@@ -98,7 +130,7 @@ def preview_dataframe_rows(df: pd.DataFrame, rows: int = 3) -> list[dict[str, An
     """Return first N rows as records for tool responses and prompts."""
     if df.empty:
         return []
-    return df.head(rows).to_dict(orient="records")
+    return json_safe(df.head(rows).to_dict(orient="records"))
 
 
 def save_dataframe_processed(
@@ -123,7 +155,7 @@ def save_dataframe_processed(
     write_table(df, artifact)
     byte_size = artifact.stat().st_size if artifact.exists() else 0
     preview_rows = (settings or get_settings()).processed_data_preview_rows
-    preview = json.dumps(df.head(preview_rows).to_dict(orient="records"), ensure_ascii=False)[:2000]
+    preview = safe_json_dumps(preview_dataframe_rows(df, rows=preview_rows))[:2000]
     return ProcessedDataRef(
         path=str(artifact.resolve()),
         preview=preview,
@@ -166,6 +198,6 @@ def estimate_context_chars(
     total += sum(len(t) for t in knowledge_texts)
     total += sum(len(t) for t in meta_texts)
     total += sum(len(p.preview) + len(p.path) for p in processed)
-    total += len(json.dumps(plan_context, ensure_ascii=False))
-    total += len(json.dumps(process_result, ensure_ascii=False))
+    total += len(safe_json_dumps(plan_context))
+    total += len(safe_json_dumps(process_result))
     return total
