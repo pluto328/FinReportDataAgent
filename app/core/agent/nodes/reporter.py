@@ -116,6 +116,51 @@ async def _persist_turn(
     append_session_turn(record, session_id, runtime.settings)
 
 
+async def _reprompt_reporter_force_done(
+    state: AgentState,
+    runtime: AgentRuntime,
+    *,
+    skip_read_data_file: bool,
+    log,
+) -> dict:
+    prompt = build_reporter_prompt(
+        state, runtime, force_done=True, skip_read_data_file=skip_read_data_file
+    )
+    log.info("补充检索不可用或已达上限，强制生成回答")
+    raw = await invoke_llm_decision(
+        runtime.llm_for_reporter(),
+        prompt,
+        phase="reporter",
+        purpose="force_done",
+        stream_field="answer",
+        stream_as="answer",
+        emit_thinking=False,
+    )
+    return parse_reporter_response(raw)
+
+
+async def _ensure_answer(
+    state: AgentState,
+    runtime: AgentRuntime,
+    parsed: dict,
+    *,
+    skip_read_data_file: bool,
+    log,
+) -> dict:
+    answer = str(parsed.get("answer") or parsed.get("report") or "").strip()
+    if answer:
+        return parsed
+    log.info("回答为空，再次强制生成")
+    reparsed = await _reprompt_reporter_force_done(
+        state, runtime, skip_read_data_file=skip_read_data_file, log=log
+    )
+    if str(reparsed.get("answer") or reparsed.get("report") or "").strip():
+        return reparsed
+    reparsed["action"] = "done"
+    reparsed["answer"] = reparsed.get("answer") or "抱歉，未能生成完整回答，请根据已检索到的数据稍后重试。"
+    return reparsed
+
+
 async def _finalize_from_parsed(
     state: AgentState,
     runtime: AgentRuntime,
@@ -130,6 +175,8 @@ async def _finalize_from_parsed(
     summary = parsed.get("summary") or ""
     final_status = state.get("status", "ok")
     answer = parsed.get("answer") or parsed.get("report") or ""
+    if not str(answer).strip():
+        log.info("最终回答为空")
     if not summary:
         summary = await _fallback_summary(runtime.llm_for_reporter(), answer, user_require_text(state))
     await _persist_turn(state, runtime, answer=answer, answer_summary=summary)
@@ -215,10 +262,10 @@ async def reporter_node(state: AgentState, runtime: AgentRuntime) -> dict:
             **append_node(state, "reporter"),
         }
 
+    skip_read_data_file = report_step == 0 and reporter_has_preloaded_data(state)
     force_done = (
         report_step >= max_report_steps
         or bool(state.get("report_done"))
-        or (report_step == 0 and reporter_has_preloaded_data(state))
     )
     stream_field = "answer"
 
@@ -230,7 +277,9 @@ async def reporter_node(state: AgentState, runtime: AgentRuntime) -> dict:
     data_q = ""
 
     for attempt in range(3):
-        prompt = build_reporter_prompt(state, runtime, force_done=force_done)
+        prompt = build_reporter_prompt(
+            state, runtime, force_done=force_done, skip_read_data_file=skip_read_data_file
+        )
         if attempt > 0:
             log.debug("重复 read_data_file 后重问 LLM", attempt=attempt + 1)
         else:
@@ -331,6 +380,11 @@ async def reporter_node(state: AgentState, runtime: AgentRuntime) -> dict:
             patch["process_done"] = False
         return patch
 
+    if action in ("retrieve_text", "retrieve_data"):
+        parsed = await _reprompt_reporter_force_done(
+            state, runtime, skip_read_data_file=skip_read_data_file, log=log
+        )
+
     if not force_done and action == "call_tool" and tool_name:
         if tool_name == "read_data_file":
             session_id = state.get("session_id", "")
@@ -356,6 +410,13 @@ async def reporter_node(state: AgentState, runtime: AgentRuntime) -> dict:
         }
 
     log.info("生成最终输出")
+    parsed = await _ensure_answer(
+        state,
+        runtime,
+        parsed,
+        skip_read_data_file=skip_read_data_file,
+        log=log,
+    )
     return await _finalize_from_parsed(
         state,
         runtime,

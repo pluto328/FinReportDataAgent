@@ -7,7 +7,7 @@ from pathlib import Path
 
 from app.core.agent.nodes._helpers import (
     extract_history_context,
-    format_file_previews_for_prompt,
+    format_processed_data_full_for_prompt,
     format_report_tool_history,
     normalize_queries_for_flags,
     report_tool_catalog,
@@ -15,7 +15,6 @@ from app.core.agent.nodes._helpers import (
     summarize_plan_steps,
     user_require_text,
 )
-from app.schemas.structured import REPORTER_PREVIEW_DISPLAY_ROWS
 from app.core.agent.state import AgentRuntime, AgentState
 from app.core.session.process_artifact_store import (
     format_intermediate_catalog_for_agent,
@@ -49,32 +48,27 @@ def _format_meta_hits(meta: list, *, limit: int = 8) -> str:
     return "\n".join(lines)
 
 
-def _format_loaded_data(report_context: dict, *, max_per_file: int = 3500) -> str:
+def _format_supplemental_loaded_data(
+    report_context: dict,
+    *,
+    already_loaded: set[str],
+    max_per_file: int,
+) -> str:
     loaded_files = report_context.get("loaded_files") or {}
-    if loaded_files:
-        blocks: list[str] = []
-        for path, content in loaded_files.items():
-            name = Path(str(path)).name
-            text = str(content)[:max_per_file]
-            blocks.append(f"#### {name}\n{text}")
-        return "\n\n".join(blocks)
-    loaded = str(report_context.get("loaded_content", "") or "")
-    if loaded:
-        return loaded[:max_per_file]
-    return "（尚未通过 read_data_file 读取中间数据）"
-
-
-def _format_loaded_paths(report_context: dict) -> str:
-    paths = report_context.get("loaded_paths") or []
-    if not paths:
-        single = report_context.get("loaded_path", "")
-        if single:
-            paths = [single]
-    if not paths:
-        return "（无）"
-    return ", ".join(Path(str(p)).name for p in paths)
-
-
+    if not loaded_files:
+        loaded = str(report_context.get("loaded_content", "") or "")
+        path = str(report_context.get("loaded_path", "") or "")
+        if loaded and path and path not in already_loaded:
+            name = Path(path).name
+            return f"#### {name}\n{loaded[:max_per_file]}"
+        return ""
+    blocks: list[str] = []
+    for path, content in loaded_files.items():
+        if path in already_loaded:
+            continue
+        name = Path(str(path)).name
+        blocks.append(f"#### {name}\n{str(content)[:max_per_file]}")
+    return "\n\n".join(blocks)
 def _format_retrieval_history(state: AgentState) -> str:
     lines: list[str] = []
     text_q = state.get("text_query", "")
@@ -104,6 +98,7 @@ def build_reporter_prompt(
     runtime: AgentRuntime,
     *,
     force_done: bool = False,
+    skip_read_data_file: bool = False,
 ) -> str:
     chunks = state.get("knowledge_chunks") or []
     meta = state.get("meta_hits") or []
@@ -127,11 +122,12 @@ def build_reporter_prompt(
     doc_text = _format_document_chunks(chunks)
     meta_text = _format_meta_hits(meta)
     retrieval_history = _format_retrieval_history(state)
-    loaded_paths_text = _format_loaded_paths(report_context)
-    loaded_data_text = _format_loaded_data(report_context)
-    previews_text = format_file_previews_for_prompt(
-        state.get("file_previews"),
-        display_rows=REPORTER_PREVIEW_DISPLAY_ROWS,
+    max_chars = runtime.settings.context_size_threshold_chars
+    processed_full_text, loaded_paths = format_processed_data_full_for_prompt(state, runtime.settings)
+    supplemental_data = _format_supplemental_loaded_data(
+        report_context,
+        already_loaded=set(loaded_paths),
+        max_per_file=max_chars,
     )
     process_summary = json.dumps(process_result, ensure_ascii=False)[:1500] if process_result else "（无）"
 
@@ -141,32 +137,49 @@ def build_reporter_prompt(
             f"已达最大 report tool 步数({max_report_steps})，必须 action=done 并输出最终 answer 与 summary，"
             "禁止 call_tool、retrieve_text、retrieve_data。\n"
         )
+    skip_read_line = ""
+    if skip_read_data_file and not force_done:
+        skip_read_line = (
+            "「已处理数据全量」已注入下方，禁止对 catalog 内文件再 call_tool read_data_file；"
+            "若仍需公司/标的文本资料，须 action=retrieve_text。\n"
+        )
+
+    supplemental_block = ""
+    if supplemental_data.strip():
+        supplemental_block = f"补充读取的数据:\n{supplemental_data}\n"
 
     return (
         f"用户需求:{user_require_text(state)}\n"
         f"规划结果:{json.dumps(plan_context, ensure_ascii=False)[:800]}\n"
 
         f"中间数据（文件名:描述）:\n{catalog_text}\n"
-        f"已处理数据预览(CSV):\n{previews_text}\n"
+        f"已处理数据全量（单文件/总量上限 {max_chars} 字符，超出截断）:\n{processed_full_text}\n"
+        f"{supplemental_block}"
         f"处理摘要:\n{process_summary}\n"
-        f"已读取文件:{loaded_paths_text}\n"
-        f"已读取数据内容:\n{loaded_data_text}\n"
         f"文档片段:\n{doc_text}\n"
         f"可用 report 工具:\n{tool_catalog}\n"
         f"已检索记录（补充检索时须避免重复 query 与已命中来源）:\n{retrieval_history}\n"
         f"{force_line}"
-        "请根据问题需求，判断是否已有可用数据。按以下规则填写 JSON 各字段。\n"
+        f"{skip_read_line}"
+        "请根据问题需求，判断是否已有可用数据/文档片段。按以下规则填写 JSON 各字段。\n"
         "规则：\n"
+        "0. 二次文本检索（重要）：若用户需求含「相关资料/背景/研报/公告/新闻/解读/资料」等，"
+        "且「已处理数据全量」或处理摘要中已识别出具体公司或证券名称，但「文档片段」几乎没有该公司相关内容："
+        "必须先 action=retrieve_text，text_query 填「{公司名} 研报/公告/资料」等（勿重复已检索 query），"
+        "answer/summary 留空；禁止直接 done。"
+        "若首轮规划未做知识检索（文档片段为空或仅有榜单/指标泛化内容），而回答需要目标公司文本资料，同样必须先 retrieve_text。\n"
         "1. 若仍需补充结构化数据检索，action=retrieve_data 并填写 data_query（须与已检索记录不同）；"
         "同时填写 enable_process、enable_chart 表示补检索后是否需重新数据处理/画图；"
         "不得填写 text_query。\n"
         "2. 若仍需补充知识文本检索，action=retrieve_text 并填写 text_query（须避免与已检索记录重复）；"
         "不得填写 data_query、enable_process、enable_chart。\n"
-        "3. 需求需要读取中间文件回答时，action=call_tool，tool_name=read_data_file，params.path 填中间数据文件名；"
-        "若「已处理数据预览(CSV)」已含所需数据，禁止 read_data_file，直接 action=done。\n"
-        "4. 信息已足够时 action=done，并填写 answer 与 summary。\n"
+        "3. 一般禁止 read_data_file：已处理数据全量已在上方注入。"
+        "仅当需读取 catalog 未包含的额外文件时才 action=call_tool read_data_file。\n"
+        "4. 信息已足够时 action=done，并填写 answer 与 summary。"
+        "「足够」指：已处理数据全量与文档片段已满足问题，或无需更多文本资料。"
+        "若「已检索记录」已有补充检索且文档片段非空，或补充检索连续无新结果：禁止再 retrieve，必须 done 并基于已有内容作答。\n"
         "5. action 为 retrieve_text、retrieve_data 或 call_tool 时，answer、summary 必须均为空字符串。\n"
-        "6. action 为 done 时：根据用户需求、已处理数据给出专业金融分析建议，并作适当拓展，填入 answer；summary 填 2-3 句摘要。\n"
+        "6. action 为 done 时：根据用户需求、已处理数据全量与文档片段给出专业金融分析建议，并作适当拓展，填入 answer；summary 填 2-3 句摘要。\n"
         "输出 JSON（不要其它文字）："
         '{"action":"call_tool|retrieve_text|retrieve_data|done","tool_name":"read_data_file",'
         '"params":{},"text_query":"","data_query":"","enable_process":false,"enable_chart":false,'
