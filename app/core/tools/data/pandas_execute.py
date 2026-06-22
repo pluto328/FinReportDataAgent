@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 from app.config.settings import Settings, get_settings
-from app.core.tools.artifact_utils import preview_dataframe_rows, save_dataframe_processed
+from app.core.tools.artifact_utils import save_dataframe_processed
 from app.core.tools.base_tool import BaseTool
 from app.core.tools.structured_ops import normalize_file_paths, read_table_full
 
@@ -80,7 +80,7 @@ class PandasExecuteTool(BaseTool):
         "禁止 import、pd.read_* 与任何注释）、"
         "artifact_name（必填，保存文件名含后缀，根据描述取名，不与已有中间数据文件名重复）、"
         "artifact_description（必填，产物中文说明，如「负债榜前五名数据」）。"
-        "返回：path（保存后的绝对路径）、preview（产物前3行）；非 DataFrame 结果返回 error。"
+        "返回：path（保存后的绝对路径）；预览写入会话 state，不在工具结果中返回；非 DataFrame 结果返回 error。"
     )
 
     async def run(self, **kwargs: Any) -> dict[str, Any]:
@@ -113,7 +113,7 @@ class PandasExecuteTool(BaseTool):
                     mode="tool",
                     artifact_name=str(kwargs.get("artifact_name", "")),
                 )
-                return {"path": ref.path, "preview": preview_dataframe_rows(result)}
+                return {"path": ref.path}
             return {"error": "result must be a DataFrame", "error_code": "invalid_result"}
         except Exception as exc:
             return {"error": str(exc), "error_code": type(exc).__name__}

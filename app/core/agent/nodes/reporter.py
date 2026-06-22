@@ -11,6 +11,7 @@ from app.core.agent.nodes._helpers import (
     summarize_data_tool_steps,
     summarize_plan_steps,
     summarize_report_steps,
+    user_require_text,
 )
 from app.core.agent.nodes._node_log import node_logger
 from app.core.agent.prompts.reporter_prompt import build_reporter_prompt, parse_reporter_response
@@ -19,7 +20,7 @@ from app.core.agent.query_guard import INSUFFICIENT_DATA_MESSAGE
 from app.core.session.history_store import append_session_turn
 from app.core.session.process_artifact_store import get_session_catalog, resolve_catalog_path
 from app.schemas.session import SessionTurnRecord
-from app.schemas.structured import PendingToolCall
+from app.schemas.structured import NodeEnableFlags, PendingToolCall
 
 
 def _retrieval_insufficient(state: AgentState) -> bool:
@@ -37,6 +38,27 @@ def _retrieval_insufficient(state: AgentState) -> bool:
     if k_en and d_en:
         return k_fail and d_fail
     return k_fail or d_fail
+
+
+def _merge_reporter_flags(
+    state: AgentState,
+    *,
+    enable_knowledge: bool | None = None,
+    enable_data: bool | None = None,
+    enable_process: bool | None = None,
+    enable_chart: bool | None = None,
+) -> NodeEnableFlags:
+    current = state.get("node_flags") or NodeEnableFlags()
+    updates: dict[str, bool] = {}
+    if enable_knowledge is not None:
+        updates["enable_knowledge_retrieve"] = enable_knowledge
+    if enable_data is not None:
+        updates["enable_data_retrieve"] = enable_data
+    if enable_process is not None:
+        updates["enable_process"] = enable_process
+    if enable_chart is not None:
+        updates["enable_chart"] = enable_chart
+    return current.model_copy(update=updates)
 
 
 def _append_supplemental_queries(
@@ -57,11 +79,11 @@ def _append_supplemental_queries(
     return ctx
 
 
-async def _fallback_summary(llm, body: str, user_query: str) -> str:
+async def _fallback_summary(llm, body: str, user_require: str) -> str:
     if not body.strip():
         return ""
     prompt = (
-        f"用户问题:{user_query}\n"
+        f"用户需求:{user_require}\n"
         f"回答内容:{body[:4000]}\n"
         "请用2-3句中文概括上述内容的核心结论与关键数据。只输出摘要正文。"
     )
@@ -107,7 +129,7 @@ async def _finalize_from_parsed(
     final_status = state.get("status", "ok")
     answer = parsed.get("answer") or parsed.get("report") or ""
     if not summary:
-        summary = await _fallback_summary(runtime.llm, answer, state.get("user_query", ""))
+        summary = await _fallback_summary(runtime.llm, answer, user_require_text(state))
     await _persist_turn(state, runtime, answer=answer, answer_summary=summary)
     log.info("回答生成成功", answer_len=len(answer))
     log.end(report_done=True, status=final_status, answer_len=len(answer))
@@ -115,6 +137,7 @@ async def _finalize_from_parsed(
         "final_answer": answer,
         "status": final_status,
         "need_more_retrieval": False,
+        "after_reporter_retrieval_goto": "",
         "report_done": True,
         "pending_tool": None,
         "report_context": {**summarize_report_steps(report_steps), "answer_summary": summary},
@@ -159,13 +182,27 @@ async def reporter_node(state: AgentState, runtime: AgentRuntime) -> dict:
                 **append_node(state, "reporter"),
             }
         if retrieval_round + 1 < max_rounds:
-            log.info("上下文不足，触发补充检索", round=retrieval_round + 1)
-            log.end(need_more_retrieval=True, status="retry")
-            return {
-                "retrieval_round": retrieval_round + 1,
-                "need_more_retrieval": True,
-                **append_node(state, "reporter"),
-            }
+            flags = state.get("node_flags")
+            text_q = str(state.get("text_query") or "").strip()
+            data_q = str(state.get("data_query") or "").strip()
+            sup_k = bool(flags and flags.enable_knowledge_retrieve and text_q)
+            sup_d = bool(flags and flags.enable_data_retrieve and data_q)
+            if sup_k or sup_d:
+                log.info("上下文不足，触发补充检索", round=retrieval_round + 1)
+                log.end(need_more_retrieval=True, status="retry")
+                new_flags = flags or NodeEnableFlags()
+                return {
+                    "retrieval_round": retrieval_round + 1,
+                    "need_more_retrieval": True,
+                    "retrieval_from_reporter": True,
+                    "supplemental_retrieve_knowledge": sup_k,
+                    "supplemental_retrieve_data": sup_d,
+                    "after_reporter_retrieval_goto": (
+                        "data_processor" if sup_d and bool(new_flags.enable_process) else "reporter"
+                    ),
+                    "node_flags": new_flags,
+                    **append_node(state, "reporter"),
+                }
         log.info("无法查询到目标数据")
         log.end(status="not_found", report_done=True)
         return {
@@ -238,9 +275,13 @@ async def reporter_node(state: AgentState, runtime: AgentRuntime) -> dict:
             break
         break
 
+    enable_process_flag = bool(parsed.get("enable_process", False))
+    enable_chart_flag = bool(parsed.get("enable_chart", False))
+
     if not force_done and action == "retrieve_text" and text_q and retrieval_round + 1 < max_rounds:
         log.info("触发补充文本检索", text_query=text_q)
         log.end(need_more_retrieval=True, next_node="retriever")
+        new_flags = _merge_reporter_flags(state, enable_knowledge=True)
         return {
             "text_query": text_q,
             "retrieval_round": retrieval_round + 1,
@@ -248,25 +289,38 @@ async def reporter_node(state: AgentState, runtime: AgentRuntime) -> dict:
             "retrieval_from_reporter": True,
             "supplemental_retrieve_knowledge": True,
             "supplemental_retrieve_data": False,
+            "after_reporter_retrieval_goto": "reporter",
+            "node_flags": new_flags,
             "report_context": _append_supplemental_queries(report_context, text_q=text_q),
             "pending_tool": None,
             **append_node(state, "reporter"),
         }
 
     if not force_done and action == "retrieve_data" and data_q and retrieval_round + 1 < max_rounds:
-        log.info("触发补充数据检索", data_query=data_q)
+        log.info("触发补充数据检索", data_query=data_q, enable_process=enable_process_flag)
         log.end(need_more_retrieval=True, next_node="retriever")
-        return {
+        new_flags = _merge_reporter_flags(
+            state,
+            enable_data=True,
+            enable_process=enable_process_flag,
+            enable_chart=enable_chart_flag,
+        )
+        patch: dict = {
             "data_query": data_q,
             "retrieval_round": retrieval_round + 1,
             "need_more_retrieval": True,
             "retrieval_from_reporter": True,
             "supplemental_retrieve_knowledge": False,
             "supplemental_retrieve_data": True,
+            "after_reporter_retrieval_goto": "data_processor" if enable_process_flag else "reporter",
+            "node_flags": new_flags,
             "report_context": _append_supplemental_queries(report_context, data_q=data_q),
             "pending_tool": None,
             **append_node(state, "reporter"),
         }
+        if enable_process_flag:
+            patch["process_done"] = False
+        return patch
 
     if not force_done and action == "call_tool" and tool_name:
         if tool_name == "read_data_file":

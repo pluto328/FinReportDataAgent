@@ -124,6 +124,20 @@ class DataToolStepResult(BaseModel):
     artifact_ref: ProcessedDataRef | None = None
 
 
+class FilePreviewEntry(BaseModel):
+    """Per-file preview cache for agent prompts (up to 20 rows on disk in state)."""
+
+    path: str
+    description: str = ""
+    preview_rows: list[dict[str, Any]] = Field(default_factory=list)
+    row_count: int = 0
+
+
+FILE_PREVIEW_STORE_ROWS = 20
+DATA_PROCESSOR_PREVIEW_DISPLAY_ROWS = 3
+REPORTER_PREVIEW_DISPLAY_ROWS = 20
+
+
 class SqlStepResult(BaseModel):
     step: int
     sql: str

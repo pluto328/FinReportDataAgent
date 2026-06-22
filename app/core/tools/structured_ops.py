@@ -50,7 +50,36 @@ def read_table_preview(path: str, *, rows: int = 20) -> pd.DataFrame:
     return read_table(path, limit=rows)
 
 
+def prepare_dataframe_for_export(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize DataFrame for tabular export (flatten MultiIndex, avoid Excel write errors)."""
+    out = df.copy()
+    if isinstance(out.columns, pd.MultiIndex):
+        out.columns = [_flatten_column_name(col) for col in out.columns]
+    if isinstance(out.index, pd.MultiIndex):
+        out = out.reset_index()
+    seen: dict[str, int] = {}
+    unique_cols: list[str] = []
+    for col in out.columns:
+        name = str(col)
+        count = seen.get(name, 0)
+        if count:
+            unique_cols.append(f"{name}_{count + 1}")
+        else:
+            unique_cols.append(name)
+        seen[name] = count + 1
+    out.columns = unique_cols
+    return out
+
+
+def _flatten_column_name(col: object) -> str:
+    if isinstance(col, tuple):
+        parts = [str(c) for c in col if c is not None and str(c) != ""]
+        return "_".join(parts) if parts else "column"
+    return str(col)
+
+
 def write_table(df: pd.DataFrame, path: Path) -> None:
+    df = prepare_dataframe_for_export(df)
     suffix = path.suffix.lower()
     path.parent.mkdir(parents=True, exist_ok=True)
     if suffix == ".csv":

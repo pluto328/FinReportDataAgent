@@ -7,11 +7,15 @@ from pathlib import Path
 
 from app.core.agent.nodes._helpers import (
     extract_history_context,
+    format_file_previews_for_prompt,
     format_report_tool_history,
+    normalize_queries_for_flags,
     report_tool_catalog,
     summarize_data_tool_steps,
     summarize_plan_steps,
+    user_require_text,
 )
+from app.schemas.structured import REPORTER_PREVIEW_DISPLAY_ROWS
 from app.core.agent.state import AgentRuntime, AgentState
 from app.core.session.process_artifact_store import (
     format_intermediate_catalog_for_agent,
@@ -125,6 +129,10 @@ def build_reporter_prompt(
     retrieval_history = _format_retrieval_history(state)
     loaded_paths_text = _format_loaded_paths(report_context)
     loaded_data_text = _format_loaded_data(report_context)
+    previews_text = format_file_previews_for_prompt(
+        state.get("file_previews"),
+        display_rows=REPORTER_PREVIEW_DISPLAY_ROWS,
+    )
     process_summary = json.dumps(process_result, ensure_ascii=False)[:1500] if process_result else "（无）"
 
     force_line = ""
@@ -135,41 +143,46 @@ def build_reporter_prompt(
         )
 
     return (
-        f"问题:{state.get('user_query', '')}\n"
+        f"用户需求:{user_require_text(state)}\n"
         f"规划结果:{json.dumps(plan_context, ensure_ascii=False)[:800]}\n"
 
         f"中间数据（文件名:描述）:\n{catalog_text}\n"
+
         f"已读取文件:{loaded_paths_text}\n"
         f"已读取数据内容:\n{loaded_data_text}\n"
         f"文档片段:\n{doc_text}\n"
         f"可用 report 工具:\n{tool_catalog}\n"
         f"已检索记录（补充检索时须避免重复 query 与已命中来源）:\n{retrieval_history}\n"
         f"{force_line}"
-        "请根据问题需求解决情况和可用中间数据路径、已读取数据内容和以下规则填写 JSON 各字段。\n"
+        "请根据问题需求，判断是否已有可用数据。按以下规则填写 JSON 各字段。\n"
         "规则：\n"
-        "1. 若仍需补充结构化数据检索，action=retrieve_data 并填写 data_query；"
-        "query 须与已检索记录中的 query 不同，且应换角度/换关键词以获取未命中的数据。\n"
-        "2. 若仍需补充知识文本检索，action=retrieve_text 并填写 text_query；"
-        "query 须避免与已检索记录重复，并尽量覆盖尚未命中的文档来源。\n"
-        "3. 若需读取某中间数据且未读取过，action=call_tool，tool_name=read_data_file，params.path 填中间数据文件名；"     
-        "4. 若「已读取数据内容」与文档片段已足够回答问题，直接 action=done，不要继续 call_tool。\n"
-        "5. 信息已足够时 action=done，并填写 answer 与 summary。\n"
-        "6. action 为 retrieve_text、retrieve_data 或 call_tool 时，answer、summary 必须均为空字符串。\n"
-        "7. action 为 done 时：根据用户提问、已处理数据给出专业金融分析建议，并作适当拓展，填入 answer；summary 填 2-3 句摘要。\n"
+        "1. 若仍需补充结构化数据检索，action=retrieve_data 并填写 data_query（须与已检索记录不同）；"
+        "同时填写 enable_process、enable_chart 表示补检索后是否需重新数据处理/画图；"
+        "不得填写 text_query。\n"
+        "2. 若仍需补充知识文本检索，action=retrieve_text 并填写 text_query（须避免与已检索记录重复）；"
+        "不得填写 data_query、enable_process、enable_chart。\n"
+        "3. 需求需要读取中间文件回答时，action=call_tool，tool_name=read_data_file，params.path 填中间数据文件名；"
+        "4. 信息已足够时 action=done，并填写 answer 与 summary。\n"
+        "5. action 为 retrieve_text、retrieve_data 或 call_tool 时，answer、summary 必须均为空字符串。\n"
+        "6. action 为 done 时：根据用户需求、已处理数据给出专业金融分析建议，并作适当拓展，填入 answer；summary 填 2-3 句摘要。\n"
         "输出 JSON（不要其它文字）："
         '{"action":"call_tool|retrieve_text|retrieve_data|done","tool_name":"read_data_file",'
-        '"params":{},"text_query":"","data_query":"","answer":"","summary":""}'
+        '"params":{},"text_query":"","data_query":"","enable_process":false,"enable_chart":false,'
+        '"answer":"","summary":""}'
     )
 
 
 def parse_reporter_response(raw: str) -> dict:
     from app.core.agent.nodes._helpers import parse_llm_json
+    from app.schemas.structured import NodeEnableFlags
 
     action = "done"
     tool_name = "read_data_file"
     params: dict = {}
     text_q = ""
     data_q = ""
+    enable_process = False
+    enable_chart = False
     answer = ""
     report = ""
     summary = ""
@@ -180,6 +193,8 @@ def parse_reporter_response(raw: str) -> dict:
         params = dict(data.get("params") or {})
         text_q = str(data.get("text_query", "") or "").strip()
         data_q = str(data.get("data_query", "") or "").strip()
+        enable_process = bool(data.get("enable_process", False))
+        enable_chart = bool(data.get("enable_chart", False))
         answer = str(data.get("answer", "") or "").strip()
         report = str(data.get("report", "") or "").strip()
         summary = str(data.get("summary", "") or "").strip()
@@ -198,10 +213,20 @@ def parse_reporter_response(raw: str) -> dict:
         answer = ""
         summary = ""
 
-    if action == "retrieve_text" and not text_q:
-        action = "done"
-    if action == "retrieve_data" and not data_q:
-        action = "done"
+    if action == "retrieve_text":
+        data_q = ""
+        enable_process = False
+        enable_chart = False
+        retrieve_flags = NodeEnableFlags(enable_knowledge_retrieve=True)
+        text_q, data_q = normalize_queries_for_flags(text_q, data_q, retrieve_flags)
+        if not text_q:
+            action = "done"
+    elif action == "retrieve_data":
+        text_q = ""
+        retrieve_flags = NodeEnableFlags(enable_data_retrieve=True)
+        text_q, data_q = normalize_queries_for_flags(text_q, data_q, retrieve_flags)
+        if not data_q:
+            action = "done"
 
     return {
         "action": action,
@@ -209,6 +234,8 @@ def parse_reporter_response(raw: str) -> dict:
         "params": params,
         "text_query": text_q,
         "data_query": data_q,
+        "enable_process": enable_process,
+        "enable_chart": enable_chart,
         "answer": answer,
         "report": report,
         "summary": summary,

@@ -38,8 +38,9 @@ def route_after_planning_tool(state: AgentState) -> str:
 
 
 def route_after_retriever(state: AgentState) -> str:
-    if state.get("retrieval_from_reporter"):
-        return "reporter"
+    goto = str(state.get("after_reporter_retrieval_goto") or "").strip()
+    if goto in ("reporter", "data_processor"):
+        return goto
     flags = state.get("node_flags")
     if flags and flags.enable_process:
         return "data_processor"
@@ -49,7 +50,9 @@ def route_after_retriever(state: AgentState) -> str:
 def route_after_data_processor(state: AgentState) -> str:
     if _pending_phase(state) == "data":
         return "data_tool"
-    return "reporter"
+    if state.get("process_done"):
+        return "reporter"
+    return "data_processor"
 
 
 def route_after_data_tool(state: AgentState) -> str:

@@ -18,6 +18,7 @@ from app.schemas.structured import (
     AgentStatus,
     ChartArtifact,
     DataToolStepResult,
+    FilePreviewEntry,
     NodeEnableFlags,
     PendingToolCall,
     PlanStepResult,
@@ -32,6 +33,7 @@ from app.config.settings import Settings
 
 class AgentState(TypedDict, total=False):
     user_query: str
+    user_require: str
     chat_history: list[ChatMessage]
     text_query: str
     data_query: str
@@ -49,6 +51,7 @@ class AgentState(TypedDict, total=False):
     retrieval_from_reporter: bool
     supplemental_retrieve_knowledge: bool
     supplemental_retrieve_data: bool
+    after_reporter_retrieval_goto: str
 
     pending_tool: PendingToolCall | None
     plan_done: bool
@@ -62,6 +65,7 @@ class AgentState(TypedDict, total=False):
     process_step: int
     max_process_tool_steps: int
     data_tool_steps: Annotated[list[DataToolStepResult], operator.add]
+    file_previews: dict[str, FilePreviewEntry]
     processed_data: Annotated[list[ProcessedDataRef], operator.add]
     processed_data_refs: Annotated[list[str], operator.add]
     chart_artifacts: Annotated[list[ChartArtifact], operator.add]

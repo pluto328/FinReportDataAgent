@@ -10,7 +10,6 @@ from app.core.agent.events import invoke_llm_decision
 from app.core.agent.nodes._debug_runtime import print_node_result, sample_state, stub_runtime
 from app.core.agent.nodes._helpers import (
     append_node,
-    apply_plan_flags,
     extract_history_context,
     summarize_plan_steps,
 )
@@ -121,7 +120,7 @@ async def planner_node(state: AgentState, runtime: AgentRuntime) -> dict:
     text_q = parsed["text_query"]
     data_q = parsed["data_query"]
     flags = parsed["node_flags"]
-    data_process_plan = parsed["data_process_plan"]
+    user_require = parsed["user_require"]
 
     if force_no_tool and action == "call_tool":
         log.info("规划步数已达上限，忽略 call_tool")
@@ -149,15 +148,14 @@ async def planner_node(state: AgentState, runtime: AgentRuntime) -> dict:
             enables=_flags_line(flags),
             text_query=text_q,
             data_query=data_q,
-            data_process_plan=data_process_plan,
         )
 
     out: dict[str, Any] = {
         "user_query": query,
+        "user_require": user_require,
         "text_query": text_q,
         "data_query": data_q,
         "node_flags": flags,
-        "data_process_plan": data_process_plan,
         **append_node(state, "planner"),
     }
 

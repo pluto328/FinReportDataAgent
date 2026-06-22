@@ -5,15 +5,63 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.core.agent.state import AgentRuntime, AgentState
 from app.schemas.structured import (
+    DATA_PROCESSOR_PREVIEW_DISPLAY_ROWS,
+    FILE_PREVIEW_STORE_ROWS,
+    REPORTER_PREVIEW_DISPLAY_ROWS,
     DataToolStepResult,
+    FilePreviewEntry,
     NodeEnableFlags,
     PlanStepResult,
     ReportStepResult,
 )
+
+if TYPE_CHECKING:
+    from app.config.settings import Settings
+
+_SINGLE_PATH_TOOLS = frozenset({"data_filter", "make_chart"})
+_MULTI_PATH_TOOLS = frozenset({"sql_execute", "pandas_execute", "preview_read"})
+
+
+def user_require_text(state: AgentState) -> str:
+    return str(state.get("user_require") or state.get("user_query") or "").strip()
+
+
+def parse_user_require(data: dict[str, Any], *, fallback: str = "") -> str:
+    raw = data.get("user_require")
+    if isinstance(raw, dict):
+        parts: list[str] = []
+        for key, label in (
+            ("data", "需要什么数据"),
+            ("knowledge", "需要什么知识"),
+            ("tables", "需要什么表格"),
+        ):
+            val = str(raw.get(key, "") or "").strip()
+            if val:
+                parts.append(f"{label}：{val}")
+        text = "；".join(parts)
+        return text or fallback
+    text = str(raw or "").strip()
+    return text or fallback
+
+
+def normalize_queries_for_flags(
+    text_q: str,
+    data_q: str,
+    flags: NodeEnableFlags,
+    *,
+    fallback: str = "",
+) -> tuple[str, str]:
+    text = text_q.strip() if flags.enable_knowledge_retrieve else ""
+    data = data_q.strip() if flags.enable_data_retrieve else ""
+    if flags.enable_knowledge_retrieve and not text and fallback:
+        text = fallback.strip()
+    if flags.enable_data_retrieve and not data and fallback:
+        data = fallback.strip()
+    return text, data
 
 
 def append_node(state: AgentState, name: str) -> dict:
@@ -25,27 +73,90 @@ def parse_llm_json(raw: str) -> dict[str, Any]:
     return json.loads(match.group(0) if match else raw)
 
 
-def normalize_data_tool_params(params: dict, *, file_paths: list[str]) -> dict:
+def normalize_data_tool_params(
+    params: dict,
+    *,
+    file_paths: list[str],
+    tool_name: str = "",
+    session_id: str = "",
+    settings: Settings | None = None,
+    extra_paths: list[str] | None = None,
+) -> dict:
+    from app.core.session.process_artifact_store import resolve_catalog_path
+
     out = dict(params or {})
+    retrieved = [str(p) for p in file_paths if p]
+    search_pool = list(retrieved)
+    if extra_paths:
+        search_pool.extend(str(p) for p in extra_paths if p)
+
+    def resolve_one(raw: str) -> str:
+        text = str(raw or "").strip()
+        if not text:
+            return ""
+        return resolve_catalog_path(session_id, text, settings, extra_paths=search_pool)
+
+    if tool_name == "preview_read":
+        raw_paths: list[str] = []
+        tool_paths = out.get("file_paths")
+        single = out.get("file_path")
+        if tool_paths:
+            if isinstance(tool_paths, str):
+                raw_paths = [tool_paths]
+            else:
+                raw_paths = [str(p) for p in tool_paths if p]
+        elif single:
+            if isinstance(single, list):
+                raw_paths = [str(p) for p in single if p]
+            else:
+                raw_paths = [str(single)]
+        resolved_paths: list[str] = []
+        for raw in raw_paths:
+            hit = resolve_one(raw)
+            if hit and hit not in resolved_paths:
+                resolved_paths.append(hit)
+        result = dict(out)
+        result["file_paths"] = resolved_paths
+        if resolved_paths:
+            result["file_path"] = resolved_paths[0]
+        elif single and not isinstance(single, list):
+            result["file_path"] = str(single)
+        return result
+
+    raw_paths: list[str] = []
     tool_paths = out.get("file_paths")
     single = out.get("file_path")
     if tool_paths:
         if isinstance(tool_paths, str):
-            out["file_paths"] = [tool_paths]
+            raw_paths = [tool_paths]
         else:
-            out["file_paths"] = [str(p) for p in tool_paths if p]
+            raw_paths = [str(p) for p in tool_paths if p]
     elif single:
         if isinstance(single, list):
-            out["file_paths"] = [str(p) for p in single if p]
+            raw_paths = [str(p) for p in single if p]
         else:
-            out["file_paths"] = [str(single)]
-    elif file_paths:
-        out["file_paths"] = list(file_paths)
-    if out.get("file_paths") and not out.get("file_path"):
-        out["file_path"] = out["file_paths"][0]
-    elif out.get("file_path") and not out.get("file_paths"):
-        fp = out["file_path"]
-        out["file_paths"] = [str(fp)] if not isinstance(fp, list) else [str(p) for p in fp if p]
+            raw_paths = [str(single)]
+    elif tool_name in _MULTI_PATH_TOOLS and retrieved:
+        raw_paths = list(retrieved)
+
+    resolved_paths: list[str] = []
+    for raw in raw_paths:
+        hit = resolve_one(raw)
+        if hit and hit not in resolved_paths:
+            resolved_paths.append(hit)
+
+    if tool_name in _SINGLE_PATH_TOOLS:
+        raw_single = str(single or (raw_paths[0] if raw_paths else "") or "").strip()
+        resolved = resolve_one(raw_single) if raw_single else ""
+        out["file_path"] = resolved or raw_single
+        out.pop("file_paths", None)
+        return out
+
+    out["file_paths"] = resolved_paths
+    if resolved_paths:
+        out["file_path"] = resolved_paths[0]
+    elif single and not isinstance(single, list):
+        out["file_path"] = str(single)
     return out
 
 
@@ -121,15 +232,110 @@ def summarize_report_steps(steps: list[ReportStepResult]) -> dict[str, Any]:
     }
 
 
+
+def _sanitize_preview_rows(rows: list[Any]) -> list[dict[str, Any]]:
+    cleaned: list[dict[str, Any]] = []
+    for item in rows[:FILE_PREVIEW_STORE_ROWS]:
+        if isinstance(item, dict):
+            cleaned.append(item)
+    return cleaned
+
+
+def load_preview_rows_from_path(path: str, *, rows: int = FILE_PREVIEW_STORE_ROWS) -> list[dict[str, Any]]:
+    from app.core.tools.structured_ops import read_table_preview
+
+    text = str(path or "").strip()
+    if not text:
+        return []
+    try:
+        df = read_table_preview(text, rows=rows)
+        return _sanitize_preview_rows(df.to_dict(orient="records"))
+    except Exception:
+        return []
+
+
+def strip_preview_from_tool_result(result: dict[str, Any]) -> dict[str, Any]:
+    out = dict(result or {})
+    out.pop("preview", None)
+    return out
+
+
+def normalize_file_previews(
+    previews: dict[str, FilePreviewEntry | dict[str, Any]] | None,
+) -> dict[str, FilePreviewEntry]:
+    if not previews:
+        return {}
+    out: dict[str, FilePreviewEntry] = {}
+    for name, entry in previews.items():
+        if isinstance(entry, FilePreviewEntry):
+            out[str(name)] = entry
+        elif isinstance(entry, dict):
+            out[str(name)] = FilePreviewEntry.model_validate(entry)
+    return out
+
+
+def upsert_file_preview(
+    previews: dict[str, FilePreviewEntry | dict[str, Any]] | None,
+    *,
+    file_name: str,
+    path: str,
+    description: str,
+    preview_rows: list[dict[str, Any]],
+) -> dict[str, FilePreviewEntry]:
+    merged = normalize_file_previews(previews)
+    name = str(file_name or Path(path).name).strip()
+    if not name:
+        return merged
+    merged[name] = FilePreviewEntry(
+        path=str(path),
+        description=str(description or ""),
+        preview_rows=_sanitize_preview_rows(preview_rows),
+        row_count=len(preview_rows),
+    )
+    return merged
+
+
+def format_file_previews_for_prompt(
+    previews: dict[str, FilePreviewEntry] | dict[str, dict[str, Any]] | None,
+    *,
+    display_rows: int = DATA_PROCESSOR_PREVIEW_DISPLAY_ROWS,
+) -> str:
+    normalized = normalize_file_previews(previews)
+    if not normalized:
+        return "（暂无）"
+    lines: list[str] = []
+    for name, entry in normalized.items():
+        rows = entry.preview_rows[:display_rows]
+        preview_text = json.dumps(rows, ensure_ascii=False, default=str)
+        desc = entry.description or "无描述"
+        lines.append(f"- {name}|{desc}: {preview_text}")
+    return "\n".join(lines)
+
+
 def format_data_tool_history(steps: list[DataToolStepResult]) -> str:
     if not steps:
         return "（尚无数据处理工具执行记录）"
     lines: list[str] = []
     for s in steps:
-        payload = s.result if not s.error else {"error": s.error}
+        if s.error:
+            lines.append(f"步骤{s.step} {s.tool_name} -> 失败: {s.error}")
+            continue
+        desc = str(s.params.get("artifact_description") or s.params.get("description") or "").strip()
+        out_name = ""
+        res = s.result or {}
+        if res.get("paths"):
+            out_name = ", ".join(Path(str(p)).name for p in res["paths"] if p)
+        elif res.get("path"):
+            out_name = Path(str(res["path"])).name
+        elif s.tool_name == "preview_read":
+            fps = s.params.get("file_paths") or []
+            if isinstance(fps, list) and fps:
+                out_name = ", ".join(Path(str(p)).name for p in fps if p)
+            elif s.params.get("file_path"):
+                out_name = Path(str(s.params.get("file_path") or "")).name
+            desc = desc or "原始数据预览"
         lines.append(
-            f"步骤{s.step} {s.tool_name}({json.dumps(s.params, ensure_ascii=False)}) "
-            f"-> {json.dumps(payload, ensure_ascii=False)[:800]}"
+            f"步骤{s.step} {s.tool_name} -> 文件: {out_name or '无'}; 描述: {desc or '无'}"
         )
     return "\n".join(lines)
 
@@ -202,24 +408,34 @@ def report_tool_catalog(runtime: AgentRuntime) -> str:
     return "\n".join(lines) if lines else "（无）"
 
 
+def _coerce_bool(val: Any, default: bool) -> bool:
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        return bool(val)
+    if isinstance(val, str):
+        s = val.strip().lower()
+        if s in ("true", "1", "yes", "on"):
+            return True
+        if s in ("false", "0", "no", "off", ""):
+            return False
+    return default
+
+
 def apply_plan_flags(
     data: dict[str, Any],
     query: str,
     report_mode: bool,
-) -> tuple[str, str, NodeEnableFlags, str]:
-    text_q = data.get("text_query") or query
-    data_q = data.get("data_query") or query
+) -> tuple[str, str, NodeEnableFlags]:
     flags = NodeEnableFlags(
-        enable_knowledge_retrieve=bool(data.get("enable_knowledge_retrieve", True)),
-        enable_data_retrieve=bool(data.get("enable_data_retrieve", False)),
-        enable_process=bool(data.get("enable_process", False)),
-        enable_chart=bool(data.get("enable_chart", False)),
-        enable_report=False,
+        enable_knowledge_retrieve=_coerce_bool(data.get("enable_knowledge_retrieve"), True),
+        enable_data_retrieve=_coerce_bool(data.get("enable_data_retrieve"), False),
+        enable_process=_coerce_bool(data.get("enable_process"), False),
+        enable_chart=_coerce_bool(data.get("enable_chart"), False),
+        enable_report=_coerce_bool(data.get("enable_report"), report_mode),
     )
-    description = str(
-        data.get("data_process_plan", "")
-        or data.get("dataprocessplan", "")
-        or data.get("data_process_description", "")
-        or data.get("data_process_flow", "")
-    )
-    return text_q, data_q, flags, description
+    text_q = str(data.get("text_query", "") or "").strip()
+    data_q = str(data.get("data_query", "") or "").strip()
+    text_q, data_q = normalize_queries_for_flags(text_q, data_q, flags, fallback=query)
+
+    return text_q, data_q, flags

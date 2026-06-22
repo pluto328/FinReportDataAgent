@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from app.core.agent.nodes._helpers import (
     apply_plan_flags,
-    data_tool_catalog,
     extract_history_context,
     format_plan_history,
+    parse_user_require,
     plan_tool_catalog,
 )
 from app.core.agent.prompts.planner_domain_knowledge import PLANNER_DOMAIN_KNOWLEDGE
@@ -15,15 +15,8 @@ from app.core.session.process_artifact_store import format_intermediate_catalog_
 
 
 def _entry_validation_rules(has_history: bool) -> str:
-    history_note = (
-        "含「刚才/之前/继续/上述/同样」等明显追问上文时，即使表述简短也不要 reject。"
-        if has_history
-        else ""
-    )
     return (
-        "入口校验：若用户输入为寒暄闲聊、意义不明、或与金融/研报/企业数据/投资/财报无关，"
-        '则 action=reject 并填 reject_reason（chitchat|unclear|non_finance）。'
-        f"{history_note}\n"
+        "入口校验：用户输入为闲聊、意义不明、或与金融/研报/企业数据/投资/财报无关，则 action=reject"
     )
 
 
@@ -48,49 +41,58 @@ def build_planner_prompt(
     catalog_text = format_intermediate_catalog_for_agent(
         get_session_catalog(session_id, runtime.settings)
     )
-
     loaded_hint = prior_history.get("context_text", "") if history_loaded else "（尚未加载）"
 
-    if force_no_tool:
-        action_schema = '"action":"done",'
-    elif is_entry_pass:
-        action_schema = '"action":"reject|call_tool|done","reject_reason":"chitchat|unclear|non_finance",'
-    else:
-        action_schema = '"action":"call_tool|done",'
     force_line = ""
     if force_no_tool:
         force_line = f"已达最大 plan tool 步数({max_steps})，必须 action=done，禁止 call_tool。\n"
     entry_rules = _entry_validation_rules(has_history) if is_entry_pass else ""
-    operation_rules ="""若会话历史数据（文件名:描述）已包含所需中间结果，可跳过数据检索与数据处理，直接图表生成或报告生成。
+    if force_no_tool:
+        tool_catalog_block = "（已达 plan tool 步数上限，禁止 call_tool）"
+    else:
+        catalog = plan_tool_catalog(runtime)
+        history_hint = ""
+        if has_history and not history_loaded:
+            history_hint = (
+                "\n仅当含有刚才/上述/那么等上下文上下文强相关，或无法理解用户需求时调用"
+                " action=call_tool，tool_name=load_history_context，params 留空。"
+            )
+        tool_catalog_block = f"{catalog}{history_hint}" if catalog else "（无）"
+    operation_rules = """若会话历史数据（文件名:描述）已包含所需中间结果，可跳过数据检索与数据处理，直接图表生成或报告生成。
     若涉及数据计算且历史数据不包含所需数据，则进行数据检索，
     若需要阅读相关报告才能得出结论，则进行知识检索，
     若所得结果涉及对比、排名、趋势、且数据量有限且适合用二维图表示则进行图表生成。
     若问题复杂/需要分析/涉及多维度/需要综合判断/给出建议/结论/则进行报告生成。
-    若用户输入明确流程，则按照用户需求决定"""
+    若用户输入明确流程，则按照用户需求决定。
+"""
+
     return (
+        "你是企业知识库咨询系统的流程规划器。需要理解用户真实需求，确定后续流程。\n"
+        "按以下固定格式输出 JSON，不要输出任何其他内容。'#'后为填写规则：\n"
+        '{"planning_thought":"",#必填，用 1-3 句中文描述规划思路，句式以「用户让我…」或「用户想咨询…」开头，接着写「我需要先…再…」（可继续「然后…」）\n'
+        '"action":"",#必填，若下一步调用工具，则填：call_tool；若用户需求已明确，则填：done。'
+        f"可调用 plan 工具:\n{tool_catalog_block}\n"
+        f"{entry_rules}"
+        '；否则填：done\n'
+        '"user_require":"",#必填，推测的用户完整真实任务意图，不复述原话，表述更精确。\n'
+        '"text_query":"",\n#仅当 enable_knowledge_retrieve 为 true 时填写（检索扩写词，填具体需求的金融强相关词，不得填语气词或关联词）；为 false 时 text_query 必须为空字符串。\n'
+        '"data_query":"",\n#仅当 enable_data_retrieve 为 true 时填写（数据检索词，填具体需求的金融强相关词，不得填语气词或关联词）；为 false 时 data_query 必须为空字符串。\n'
+        '"enable_knowledge_retrieve":"","#必填，是否需要知识检索，填true或false。\n'
+        '"enable_data_retrieve":"","#必填，是否需要数据检索，填true或false。\n'
+        '"enable_process":"","#必填，是否需要数据处理，填true或false。\n'
+        '"enable_chart":"","#必填，是否需要图表生成，填true或false。\n'
+        '"enable_report":"","#必填，是否需要报告生成，填true或false。\n'
+        '"tool_name":"",#当action=call_tool时，填下一步调用工具的名称，否则为空字符串。\n'
+        '"params":{},#当action=call_tool时，填下一步调用工具的参数，否则为空对象。\n'
+        '}\n'
+        "已知信息:\n"
         f"用户问题:{query}\n"
         f"已加载历史上下文:\n{loaded_hint}\n"
-        "你是任务规划器"
-        "你需要：1.判断用户问题是否有效，规则为"
-        f"{entry_rules}"
-        "2.判断问题含有刚才/之前/继续/上述/同样等追问上文时，调用工具load_history_context。action = call_tool。否则action = done。"
-        "3.填写 planning_thought（JSON 第一个字段）：用 1-3 句中文描述规划思路，句式以「用户让我…」或「用户想咨询…」开头，"
-        "接着写「我需要先…再…」（可继续「然后…」）；只写思路，不要写 JSON 字段名或 action 枚举。"
-        "4.分析问题，有历史上下文时，结合历史上下文判断具体需求，确定以下操作是否进行:知识检索、数据检索、数据处理、图表生成、报告生成。并填写enable_*，填true或false。规则为"
         f"{operation_rules}\n"
-        "5.如果需要进行文本检索，提取需求，扩写，尽量检索出更多有效信息，并填写text_query。\n"
-        "6.如果需要数据处理，分点标号、列出处理步骤，大致描述为取数据、数据处理、数据计算、保存结果、是否画图。填写data_process_plan。\n"
-        "7.根据数据处理要求填写data_query,要求使其尽量精准检索到相关数据文件"
-        "8.query中必须填具体需求的金融强相关词，不得填语气词或关联词"
         f"{force_line}"
-        "仅输出 JSON，不要输出任何其他内容（planning_thought 必须是第一个字段）：\n"
-        '{"planning_thought":"",' + action_schema +
-        '"text_query":"","data_query":"","data_process_plan":"",'
-        '"enable_knowledge_retrieve":false,"enable_data_retrieve":false,'
-        '"enable_process":false,"enable_chart":false,"enable_report":false}\n'
-        f"已调用plantool：({plan_step}/{max_steps}):\n{plan_history}\n"
+        f"已调用 plan tool（{plan_step}/{max_steps}）:\n{plan_history}\n"
 
-        f"会话历史数据（文件名:描述）:\n{catalog_text}\n"
+        f"已知数据（文件名:描述）:\n{catalog_text}\n"
         "规划时可参考以下常识理解用户问题：\n"
         f"{PLANNER_DOMAIN_KNOWLEDGE}\n"
     )
@@ -106,37 +108,33 @@ def parse_planner_response(
     from app.schemas.structured import NodeEnableFlags
 
     action = "done"
-    tool_name = "load_history_context"
+    tool_name = ""
     params: dict = {}
-    text_q, data_q, flags = query, query, NodeEnableFlags()
-    data_process_plan = ""
+    text_q, data_q, flags = "", "", NodeEnableFlags()
+    user_require = query
+    reject_reason = "unclear"
     try:
         data = parse_llm_json(raw)
-        action = data.get("action", "done")
-        tool_name = data.get("tool_name") or data.get("method", tool_name)
+        action = str(data.get("action", "done") or "done")
+        tool_name = str(data.get("tool_name") or data.get("method") or "").strip()
         params = dict(data.get("params") or {})
-        text_q, data_q, flags, data_process_plan = apply_plan_flags(
-            data, query, report_mode
-        )
+        text_q, data_q, flags = apply_plan_flags(data, query, report_mode)
+        user_require = parse_user_require(data, fallback=query)
+        reject_reason = str(data.get("reject_reason", "unclear"))
         if action not in ("call_tool", "done", "reject"):
             action = "done"
-        return {
-            "action": action,
-            "tool_name": tool_name,
-            "params": params,
-            "text_query": text_q,
-            "data_query": data_q,
-            "node_flags": flags,
-            "data_process_plan": data_process_plan,
-            "reject_reason": str(data.get("reject_reason", "unclear")),
-        }
+            tool_name = ""
+            params = {}
+        if action != "call_tool":
+            tool_name = ""
+            params = {}
     except Exception:
         action = "done"
         tool_name = ""
         params = {}
-        text_q, data_q = query, query
+        text_q, data_q = "", ""
         flags = NodeEnableFlags()
-        data_process_plan = ""
+        user_require = query
     return {
         "action": action,
         "tool_name": tool_name,
@@ -144,6 +142,6 @@ def parse_planner_response(
         "text_query": text_q,
         "data_query": data_q,
         "node_flags": flags,
-        "data_process_plan": data_process_plan,
-        "reject_reason": "unclear",
+        "user_require": user_require,
+        "reject_reason": reject_reason,
     }

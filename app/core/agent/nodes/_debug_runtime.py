@@ -13,6 +13,7 @@ from app.schemas.structured import NodeEnableFlags
 def sample_state(**overrides: Any) -> AgentState:
     base: AgentState = {
         "user_query": "最近7天的销售数据汇总",
+        "user_require": "需要什么数据：销售明细；需要什么知识：无；需要什么表格：汇总表",
         "chat_history": [],
         "report_mode": False,
         "session_id": "debug-session",
@@ -31,6 +32,7 @@ def sample_state(**overrides: Any) -> AgentState:
         "plan_context": {},
         "data_file_paths": [],
         "data_tool_steps": [],
+        "file_previews": {},
         "process_step": 0,
         "process_done": False,
         "report_steps": [],

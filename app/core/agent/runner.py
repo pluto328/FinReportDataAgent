@@ -20,6 +20,8 @@ def _build_initial_state(request: SearchRequest) -> AgentState:
     session_id = request.session_id or ""
     return {
         "user_query": (request.query or "").strip(),
+        "user_require": "",
+        "after_reporter_retrieval_goto": "",
         "chat_history": request.chat_history,
         "report_mode": request.report_mode,
         "session_id": session_id,
@@ -38,6 +40,7 @@ def _build_initial_state(request: SearchRequest) -> AgentState:
         "pending_tool": None,
         "data_process_plan": "",
         "data_tool_steps": [],
+        "file_previews": {},
         "process_step": 0,
         "process_done": False,
         "report_steps": [],

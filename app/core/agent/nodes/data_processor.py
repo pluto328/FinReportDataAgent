@@ -24,14 +24,14 @@ async def data_processor_node(state: AgentState, runtime: AgentRuntime) -> dict:
         log.start(enabled=False)
         log.info("数据处理未启用，跳过")
         log.end(process_done=True, skipped=True)
-        return {**append_node(state, "data_processor"), "process_done": True, "pending_tool": None}
+        return {**append_node(state, "data_processor"), "process_done": True, "after_reporter_retrieval_goto": "", "pending_tool": None}
 
     paths = state.get("data_file_paths") or []
     if not paths:
         log.start(enabled=True, file_paths=[])
         log.info("无可用数据文件，跳过处理")
         log.end(process_done=True, reason="no_files")
-        return {**append_node(state, "data_processor"), "process_done": True, "pending_tool": None}
+        return {**append_node(state, "data_processor"), "process_done": True, "after_reporter_retrieval_goto": "", "pending_tool": None}
 
     primary_path = paths[0]
     cache = state.get("file_cache") or []
@@ -60,6 +60,7 @@ async def data_processor_node(state: AgentState, runtime: AgentRuntime) -> dict:
                 "processed_data": [ref],
                 "processed_data_refs": [item.processed_artifact_path],
                 "process_done": True,
+                "after_reporter_retrieval_goto": "",
                 "pending_tool": None,
                 **append_node(state, "data_processor"),
             }
@@ -85,6 +86,13 @@ async def data_processor_node(state: AgentState, runtime: AgentRuntime) -> dict:
     tool_name = parsed["tool_name"]
     params = parsed["params"]
     new_plan = parsed["data_process_plan"]
+    plan_empty = not str(state.get("data_process_plan") or "").strip()
+
+    if plan_empty and not prior_steps and not force_no_tool and action in ("call_tool", "done"):
+        log.info("data_process_plan 为空，强制改为 replan")
+        action = "replan"
+        tool_name = ""
+        params = {}
 
     if force_no_tool and action in ("call_tool", "replan"):
         log.info("数据处理步数已达上限，忽略 {}", action)
@@ -98,12 +106,25 @@ async def data_processor_node(state: AgentState, runtime: AgentRuntime) -> dict:
         summary = summarize_data_tool_steps(prior_steps)
         out: dict[str, Any] = {
             "process_done": True,
+            "after_reporter_retrieval_goto": "",
             "pending_tool": None,
             "process_result": summary,
             **append_node(state, "data_processor"),
         }
         log.end(process_done=True, tool_steps=len(prior_steps))
         return out
+
+    if action == "replan":
+        out_replan: dict[str, Any] = {
+            "process_done": False,
+            "pending_tool": None,
+            **append_node(state, "data_processor"),
+        }
+        if new_plan:
+            out_replan["data_process_plan"] = new_plan
+        log.info("LLM 请求 replan", updated_plan=bool(new_plan))
+        log.end(process_done=False, next_node="data_processor", action="replan")
+        return out_replan
 
     out_extra: dict[str, Any] = {
         "process_done": False,
@@ -115,8 +136,6 @@ async def data_processor_node(state: AgentState, runtime: AgentRuntime) -> dict:
         ),
         **append_node(state, "data_processor"),
     }
-    if action == "replan" and new_plan:
-        out_extra["data_process_plan"] = new_plan
 
     log.info("触发 data tool 调用", tool_name=tool_name, params=params)
     log.end(process_done=False, next_node="data_tool", tool_name=tool_name)

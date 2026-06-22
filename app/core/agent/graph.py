@@ -61,7 +61,7 @@ def build_agent_graph(runtime: AgentRuntime):
     graph.add_conditional_edges(
         "data_processor",
         route_after_data_processor,
-        {"data_tool": "data_tool", "reporter": "reporter"},
+        {"data_tool": "data_tool", "reporter": "reporter", "data_processor": "data_processor"},
     )
     graph.add_conditional_edges(
         "data_tool",
