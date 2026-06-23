@@ -69,7 +69,10 @@ def route_process_fanout(state: AgentState) -> list[Send] | str:
     steps = state.get("process_steps_plan") or []
     pandas_steps = [s for s in steps if str(s.get("tool") or "") == "pandas_execute"]
     if len(pandas_steps) >= 2:
-        return [Send("process_worker", {"worker_step": s}) for s in pandas_steps]
+        return [
+            Send("process_worker", {"worker_step": s, "worker_index": i})
+            for i, s in enumerate(pandas_steps)
+        ]
     return "process_executor"
 
 

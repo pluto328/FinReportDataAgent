@@ -15,7 +15,9 @@ async def process_worker_node(state: AgentState, runtime: AgentRuntime) -> dict:
     step = state.get("worker_step") or {}
     tool_name = str(step.get("tool") or "").strip()
     params = dict(step.get("params") or {})
-    step_no = state.get("process_step", 0) + 1
+    base_step = state.get("process_step", 0)
+    worker_index = state.get("worker_index")
+    step_no = base_step + int(worker_index) + 1 if worker_index is not None else base_step + 1
 
     log.start(tool_name=tool_name, step=step_no)
     if not tool_name:
@@ -33,7 +35,6 @@ async def process_worker_node(state: AgentState, runtime: AgentRuntime) -> dict:
     # Parallel Send workers must not write process_result/process_step (LangGraph single-value keys).
     safe_keys = frozenset({
         "data_tool_steps",
-        "processed_data",
         "processed_data_refs",
         "chart_artifacts",
         "file_previews",
