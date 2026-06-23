@@ -37,12 +37,36 @@ def _merge_patches(base: dict[str, Any], patch: dict[str, Any]) -> None:
     for key, val in patch.items():
         if key in ("success", "error"):
             continue
-        if key in ("data_tool_steps", "processed_data", "processed_data_refs", "chart_artifacts"):
+        if key in ("data_tool_steps", "processed_data_refs", "chart_artifacts"):
             base.setdefault(key, [])
             if isinstance(val, list):
                 base[key].extend(val)
         else:
             base[key] = val
+
+
+def _first_failed_tool_step(state: AgentState) -> tuple[dict[str, Any] | None, str]:
+    for step in state.get("data_tool_steps") or []:
+        if step.error:
+            return {"tool": step.tool_name, "params": dict(step.params or {})}, step.error
+    return None, ""
+
+
+def _current_process_step(state: AgentState) -> int:
+    steps = state.get("data_tool_steps") or []
+    if steps:
+        return max(s.step for s in steps)
+    return int(state.get("process_step") or 0)
+
+
+def _attach_process_summary(target: dict[str, Any], state: AgentState) -> None:
+    steps = list(state.get("data_tool_steps") or [])
+    extra = target.get("data_tool_steps") or []
+    if isinstance(extra, list):
+        steps = [*steps, *extra]
+    if steps:
+        target["process_result"] = summarize_data_tool_steps(steps)
+        target["process_step"] = max(s.step for s in steps)
 
 
 async def _run_steps(
@@ -51,16 +75,15 @@ async def _run_steps(
     steps: list[dict[str, Any]],
     *,
     start_step: int,
-    parallel: bool = False,
 ) -> tuple[dict[str, Any], str, dict | None]:
-    import asyncio
-
     merged: dict[str, Any] = {}
     work_state: dict[str, Any] = dict(state)
     failed_step: dict | None = None
     error = ""
+    step_no = start_step
 
-    async def _one(step: dict, step_no: int) -> tuple[dict, dict | None, str]:
+    for step in steps:
+        step_no += 1
         tool = str(step.get("tool") or "")
         params = dict(step.get("params") or {})
         patch = await execute_data_tool(
@@ -82,31 +105,65 @@ async def _run_steps(
                 *(work_state.get("processed_data_refs") or []),
                 *patch.get("processed_data_refs", []),
             ]
+        _merge_patches(merged, patch)
         if not patch.get("success"):
-            return patch, step, str(patch.get("error") or "unknown")
-        return patch, None, ""
+            failed_step = step
+            error = str(patch.get("error") or "unknown")
+            break
 
-    if parallel and len(steps) > 1:
-        results = await asyncio.gather(
-            *[_one(step, start_step + i) for i, step in enumerate(steps)]
-        )
-        for patch, fail, err in results:
-            _merge_patches(merged, patch)
-            if fail:
-                failed_step = fail
-                error = err
-    else:
-        step_no = start_step
-        for step in steps:
-            step_no += 1
-            patch, fail, err = await _one(step, step_no)
-            _merge_patches(merged, patch)
-            if fail:
-                failed_step = fail
-                error = err
-                break
-
+    if merged.get("data_tool_steps"):
+        merged["process_step"] = step_no
     return merged, error, failed_step
+
+
+async def _attempt_process_repair(
+    state: AgentState,
+    runtime: AgentRuntime,
+    merged: dict[str, Any],
+    *,
+    failed_step: dict[str, Any],
+    error: str,
+    start_step: int,
+    log,
+) -> tuple[dict[str, Any], dict | None, str]:
+    repair_prompt = build_data_process_repair_prompt(
+        {**state, **merged},
+        runtime,
+        failed_step=failed_step,
+        error=error,
+    )
+    await emit_progress_waiting("正在修正数据处理", active=True)
+    try:
+        raw = await asyncio.wait_for(
+            invoke_llm_decision(
+                runtime.llm_for_data(),
+                repair_prompt,
+                phase="process_planner",
+                purpose="repair",
+                emit_thinking=False,
+            ),
+            timeout=runtime.settings.llm_decision_timeout_sec,
+        )
+        repair_steps = parse_one_shot_steps(raw, file_paths=list(state.get("data_file_paths") or []))
+        if repair_steps:
+            work = {**state, **merged}
+            r_patch, repair_err, repair_fail = await _run_steps(
+                work,
+                runtime,
+                repair_steps,
+                start_step=merged.get("process_step", start_step),
+            )
+            _merge_patches(merged, r_patch)
+            if not repair_fail:
+                return merged, None, ""
+            return merged, repair_fail, repair_err
+    except asyncio.TimeoutError:
+        log.info("repair LLM 超时，跳过修正", timeout_sec=runtime.settings.llm_decision_timeout_sec)
+    except Exception as exc:
+        log.info("repair 失败", error=str(exc)[:120])
+    finally:
+        await emit_progress_waiting(active=False)
+    return merged, failed_step, error
 
 
 async def process_executor_node(state: AgentState, runtime: AgentRuntime) -> dict:
@@ -121,27 +178,14 @@ async def process_executor_node(state: AgentState, runtime: AgentRuntime) -> dic
         return {**append_node(state, "process_executor"), "process_done": True, "pending_tool": None}
 
     pandas_steps, other_steps, chart_steps = _split_steps(steps, enable_chart=enable_chart)
+    all_exec = pandas_steps + other_steps
     merged: dict[str, Any] = {}
     failed_step: dict | None = None
     error = ""
 
-    if len(pandas_steps) >= 2:
-        p_patch, error, failed_step = await _run_steps(
-            state, runtime, pandas_steps, start_step=start_step, parallel=True
-        )
-        _merge_patches(merged, p_patch)
-        if not failed_step and other_steps:
-            work = {**state, **merged}
-            o_patch, error2, failed_step = await _run_steps(
-                work, runtime, other_steps, start_step=merged.get("process_step", start_step), parallel=False
-            )
-            _merge_patches(merged, o_patch)
-            if failed_step:
-                error = error2
-    else:
-        all_exec = pandas_steps + other_steps
+    if all_exec:
         patch, error, failed_step = await _run_steps(
-            state, runtime, all_exec, start_step=start_step, parallel=False
+            state, runtime, all_exec, start_step=start_step
         )
         _merge_patches(merged, patch)
 
@@ -153,52 +197,19 @@ async def process_executor_node(state: AgentState, runtime: AgentRuntime) -> dic
 
     if failed_step and not state.get("process_repair_attempted"):
         log.info("步骤失败，尝试 repair", error=error[:120])
-        repair_prompt = build_data_process_repair_prompt(
-            {**state, **merged},
+        merged, failed_step, error = await _attempt_process_repair(
+            state,
             runtime,
+            merged,
             failed_step=failed_step,
             error=error,
+            start_step=start_step,
+            log=log,
         )
-        await emit_progress_waiting("正在修正数据处理", active=True)
-        try:
-            raw = await asyncio.wait_for(
-                invoke_llm_decision(
-                    runtime.llm_for_data(),
-                    repair_prompt,
-                    phase="process_planner",
-                    purpose="repair",
-                    emit_thinking=False,
-                ),
-                timeout=runtime.settings.llm_decision_timeout_sec,
-            )
-            repair_steps = parse_one_shot_steps(
-                raw, file_paths=list(state.get("data_file_paths") or [])
-            )
-            if repair_steps:
-                work = {**state, **merged}
-                r_patch, repair_err, repair_fail = await _run_steps(
-                    work,
-                    runtime,
-                    repair_steps,
-                    start_step=merged.get("process_step", start_step),
-                    parallel=False,
-                )
-                _merge_patches(merged, r_patch)
-                out.update(merged)
-                if not repair_fail:
-                    failed_step = None
-                    error = ""
-                elif repair_err:
-                    error = repair_err
-            out["process_repair_attempted"] = True
-        except asyncio.TimeoutError:
-            log.info("repair LLM 超时，跳过修正", timeout_sec=runtime.settings.llm_decision_timeout_sec)
-            out["process_repair_attempted"] = True
-        except Exception as exc:
-            log.info("repair 失败", error=str(exc)[:120])
-            out["process_repair_attempted"] = True
-        finally:
-            await emit_progress_waiting(active=False)
+        out.update(merged)
+        out["process_repair_attempted"] = True
+        work_state = {**state, **out}
+        failed_step, error = _first_failed_tool_step(work_state)
 
     if chart_steps and enable_chart and not failed_step:
         out["pending_chart_params"] = dict(chart_steps[0].get("params") or {})
@@ -207,20 +218,15 @@ async def process_executor_node(state: AgentState, runtime: AgentRuntime) -> dic
         out["pending_chart_params"] = None
         out["process_done"] = True
 
-    all_steps = list(state.get("data_tool_steps") or [])
-    extra = out.get("data_tool_steps") or merged.get("data_tool_steps") or []
-    if isinstance(extra, list):
-        all_steps = [*all_steps, *extra]
-    if all_steps:
-        out["process_result"] = summarize_data_tool_steps(all_steps)
-        out["process_step"] = max(s.step for s in all_steps)
+    work_state = {**state, **out}
+    _attach_process_summary(out, work_state)
 
     log.end(process_done=out.get("process_done"), has_chart=bool(out.get("pending_chart_params")))
     return out
 
 
 async def process_fanin_node(state: AgentState, runtime: AgentRuntime) -> dict:
-    """After parallel workers: run remaining non-pandas steps and defer chart."""
+    """After parallel workers: check failures, run remaining steps, defer chart."""
     log = node_logger(runtime.settings, "process_fanin")
     steps = list(state.get("process_steps_plan") or [])
     flags = state.get("node_flags")
@@ -239,18 +245,44 @@ async def process_fanin_node(state: AgentState, runtime: AgentRuntime) -> dict:
 
     log.start(remaining=len(remaining), has_chart=bool(chart_params))
     merged: dict[str, Any] = {**append_node(state, "process_fanin")}
+
+    failed_step, error = _first_failed_tool_step(state)
+    if failed_step and not state.get("process_repair_attempted"):
+        log.info("并行 worker 失败，尝试 repair", error=error[:120])
+        merged, failed_step, error = await _attempt_process_repair(
+            state,
+            runtime,
+            merged,
+            failed_step=failed_step,
+            error=error,
+            start_step=_current_process_step(state),
+            log=log,
+        )
+        merged["process_repair_attempted"] = True
+        work_state = {**state, **merged}
+        failed_step, error = _first_failed_tool_step(work_state)
+
+    if failed_step:
+        merged["process_done"] = True
+        merged["pending_chart_params"] = None
+        work_state = {**state, **merged}
+        _attach_process_summary(merged, work_state)
+        log.end(error=error[:80], process_done=True)
+        return merged
+
     if remaining:
         patch, error, _ = await _run_steps(
             state,
             runtime,
             remaining,
-            start_step=state.get("process_step", 0),
-            parallel=False,
+            start_step=_current_process_step(state),
         )
         merged.update(patch)
         if error:
             merged["process_done"] = True
             merged["pending_chart_params"] = None
+            work_state = {**state, **merged}
+            _attach_process_summary(merged, work_state)
             log.end(error=error[:80])
             return merged
 
@@ -261,13 +293,7 @@ async def process_fanin_node(state: AgentState, runtime: AgentRuntime) -> dict:
         merged["pending_chart_params"] = None
         merged["process_done"] = True
 
-    steps = list(state.get("data_tool_steps") or [])
-    patch_steps = merged.get("data_tool_steps") or []
-    if isinstance(patch_steps, list):
-        steps = [*steps, *patch_steps]
-    if steps:
-        merged["process_result"] = summarize_data_tool_steps(steps)
-        merged["process_step"] = max(s.step for s in steps)
-
+    work_state = {**state, **merged}
+    _attach_process_summary(merged, work_state)
     log.end(process_done=merged.get("process_done"))
     return merged
