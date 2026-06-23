@@ -8,11 +8,7 @@ from uuid import uuid4
 
 from app.core.agent.events import invoke_llm_decision
 from app.core.agent.nodes._debug_runtime import print_node_result, sample_state, stub_runtime
-from app.core.agent.nodes._helpers import (
-    append_node,
-    extract_history_context,
-    summarize_plan_steps,
-)
+from app.core.agent.nodes._helpers import append_node, extract_history_context
 from app.core.agent.nodes._node_log import node_logger
 from app.core.agent.prompts.planner_prompt import build_planner_prompt, parse_planner_response
 from app.core.agent.query_guard import (
@@ -35,21 +31,6 @@ def _flags_line(flags: NodeEnableFlags | None) -> str:
         f"chart={flags.enable_chart} "
         f"report={flags.enable_report}"
     )
-
-
-def _apply_history_to_queries(
-    out: dict[str, Any],
-    plan_steps: list,
-    query: str,
-) -> None:
-    history_ctx = extract_history_context(plan_steps)
-    if not history_ctx.get("context_text") and not history_ctx.get("history"):
-        return
-    plan_ctx = dict(out.get("plan_context") or {})
-    if not isinstance(plan_ctx, dict):
-        plan_ctx = {}
-    plan_ctx["history_context"] = history_ctx
-    out["plan_context"] = plan_ctx
 
 
 def _reject_response(state: AgentState, query: str, reason: str) -> dict[str, Any]:
@@ -191,10 +172,8 @@ async def planner_node(state: AgentState, runtime: AgentRuntime) -> dict:
         {
             "plan_done": True,
             "pending_tool": None,
-            "plan_context": summarize_plan_steps(plan_steps),
         }
     )
-    _apply_history_to_queries(out, plan_steps, query)
     log.info("生成 query 成功", text_query=out.get("text_query"), data_query=out.get("data_query"))
     log.end(plan_done=True, enables=_flags_line(out.get("node_flags")))
     return out

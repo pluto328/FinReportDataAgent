@@ -6,7 +6,7 @@ import asyncio
 
 from app.core.agent.events import emit_tool_end, emit_tool_start
 from app.core.agent.nodes._debug_runtime import print_node_result, sample_state, stub_runtime
-from app.core.agent.nodes._helpers import append_node, summarize_plan_steps
+from app.core.agent.nodes._helpers import append_node
 from app.core.agent.nodes._node_log import node_logger
 from app.core.agent.state import AgentRuntime, AgentState
 from app.schemas.structured import PendingToolCall, PlanStepResult
@@ -65,13 +65,10 @@ async def planning_tool_node(state: AgentState, runtime: AgentRuntime) -> dict:
         result=result if isinstance(result, dict) else {"result": result},
         error=error,
     )
-    prior = state.get("plan_steps") or []
-    all_steps = [*prior, step]
     log.end(method=method, step=step_no, success=not error, next_node="planner")
     return {
         "plan_steps": [step],
         "plan_step": step_no,
-        "plan_context": summarize_plan_steps(all_steps),
         "plan_done": False,
         "pending_tool": None,
         **append_node(state, "planning_tool"),

@@ -3,6 +3,5 @@
   "data_process_plan": "读取沪深A股数据，按净利润排序取前10",
   "data_file_paths": ["data/raw_structured/沪深A股.csv"],
   "data_tool_steps": [],
-  "process_step": 0,
-  "plan_context": {"step_count": 1}
+  "process_step": 0
 }

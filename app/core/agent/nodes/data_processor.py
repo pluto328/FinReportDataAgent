@@ -16,7 +16,7 @@ from app.core.agent.prompts.data_processor_prompt import (
     parse_data_processor_response,
 )
 from app.core.agent.state import AgentRuntime, AgentState
-from app.schemas.structured import PendingToolCall, ProcessedDataRef
+from app.schemas.structured import PendingToolCall
 
 
 async def data_processor_node(state: AgentState, runtime: AgentRuntime) -> dict:
@@ -36,7 +36,6 @@ async def data_processor_node(state: AgentState, runtime: AgentRuntime) -> dict:
         return {**append_node(state, "data_processor"), "process_done": True, "after_reporter_retrieval_goto": "", "pending_tool": None}
 
     primary_path = paths[0]
-    cache = state.get("file_cache") or []
     max_steps = state.get("max_process_tool_steps", runtime.settings.max_process_tool_steps)
     current_step = state.get("process_step", 0)
     prior_steps = state.get("data_tool_steps") or []
@@ -46,26 +45,6 @@ async def data_processor_node(state: AgentState, runtime: AgentRuntime) -> dict:
         max_steps=max_steps,
         prior_tool_steps=len(prior_steps),
     )
-
-    for item in cache:
-        if item.file_path == primary_path and item.processed_artifact_path:
-            ref = ProcessedDataRef(
-                path=item.processed_artifact_path,
-                preview="(cached)",
-                mode="tool",
-                source_file=primary_path,
-            )
-            log.info("命中缓存的处理结果", path=item.processed_artifact_path)
-            log.end(process_done=True, reused=True, path=item.processed_artifact_path)
-            return {
-                "process_result": {"reused": True, "path": item.processed_artifact_path, "preview": ref.preview},
-                "processed_data": [ref],
-                "processed_data_refs": [item.processed_artifact_path],
-                "process_done": True,
-                "after_reporter_retrieval_goto": "",
-                "pending_tool": None,
-                **append_node(state, "data_processor"),
-            }
 
     force_no_tool = current_step >= max_steps
     if force_no_tool:
@@ -111,12 +90,11 @@ async def data_processor_node(state: AgentState, runtime: AgentRuntime) -> dict:
     log.info("LLM 数据处理决策", action=action, tool_name=tool_name if action != "done" else "")
 
     if action == "done":
-        summary = summarize_data_tool_steps(prior_steps)
         out: dict[str, Any] = {
             "process_done": True,
             "after_reporter_retrieval_goto": "",
             "pending_tool": None,
-            "process_result": summary,
+            "process_result": summarize_data_tool_steps(prior_steps),
             **append_node(state, "data_processor"),
         }
         log.end(process_done=True, tool_steps=len(prior_steps))

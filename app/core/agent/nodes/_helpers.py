@@ -14,7 +14,6 @@ from app.core.agent.state import AgentRuntime, AgentState
 from app.schemas.structured import (
     DATA_PROCESSOR_PREVIEW_DISPLAY_ROWS,
     FILE_PREVIEW_STORE_ROWS,
-    REPORTER_PREVIEW_DISPLAY_ROWS,
     DataToolStepResult,
     FilePreviewEntry,
     NodeEnableFlags,
@@ -367,12 +366,6 @@ def collect_processed_artifact_paths(
 
     for path, desc in get_session_catalog(session_id, s).items():
         add(path, desc)
-    for ref in state.get("processed_data_refs") or []:
-        add(str(ref))
-    for ref in state.get("processed_data") or []:
-        path = getattr(ref, "path", None) or (ref.get("path") if isinstance(ref, dict) else None)
-        if path:
-            add(str(path))
     for step in state.get("data_tool_steps") or []:
         if step.error:
             continue

@@ -23,10 +23,8 @@ from app.schemas.structured import (
     PendingToolCall,
     PlanStepResult,
     ProcessedDataRef,
-    ReportArtifact,
     ReportStepResult,
     ScoredMetaRecord,
-    SessionFileCache,
 )
 from app.config.settings import Settings
 
@@ -115,6 +113,28 @@ def dedupe_scored_meta(meta: list[ScoredMetaRecord]) -> list[ScoredMetaRecord]:
     return _merge_meta_hits([], meta)
 
 
+def _merge_process_result(
+    left: dict[str, Any] | None,
+    right: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not right:
+        return dict(left or {})
+    if not left:
+        return dict(right)
+    merged_steps: dict[int, dict[str, Any]] = {}
+    for block in (left, right):
+        for item in block.get("steps") or []:
+            if isinstance(item, dict):
+                merged_steps[int(item.get("step") or 0)] = item
+    if merged_steps:
+        steps = [merged_steps[k] for k in sorted(merged_steps)]
+        latest = right.get("latest")
+        if latest is None:
+            latest = left.get("latest")
+        return {"step_count": len(steps), "steps": steps, "latest": latest}
+    return dict(right)
+
+
 class AgentState(TypedDict, total=False):
     user_query: str
     user_require: str
@@ -126,6 +146,7 @@ class AgentState(TypedDict, total=False):
     pending_chart_params: dict[str, Any] | None
     process_repair_attempted: bool
     worker_step: dict[str, Any] | None
+    worker_index: int | None
     node_flags: NodeEnableFlags
     report_mode: bool
     session_id: str
@@ -146,15 +167,13 @@ class AgentState(TypedDict, total=False):
     plan_step: int
     max_plan_tool_steps: int
     plan_steps: Annotated[list[PlanStepResult], operator.add]
-    plan_context: dict[str, Any]
 
-    process_result: dict[str, Any]
+    process_result: Annotated[dict[str, Any], _merge_process_result]
     process_done: bool
     process_step: Annotated[int, _merge_max_int]
     max_process_tool_steps: int
     data_tool_steps: Annotated[list[DataToolStepResult], operator.add]
     file_previews: Annotated[dict[str, FilePreviewEntry], _merge_file_previews]
-    processed_data: Annotated[list[ProcessedDataRef], operator.add]
     processed_data_refs: Annotated[list[str], operator.add]
     chart_artifacts: Annotated[list[ChartArtifact], operator.add]
 
@@ -164,10 +183,8 @@ class AgentState(TypedDict, total=False):
     report_steps: Annotated[list[ReportStepResult], operator.add]
     report_context: dict[str, Any]
 
-    file_cache: list[SessionFileCache]
     nodes_traversed: Annotated[list[str], operator.add]
     final_answer: str
-    report_artifact: ReportArtifact | None
     status: AgentStatus
     query_rejected: bool
 

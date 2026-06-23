@@ -29,7 +29,6 @@ def sample_state(**overrides: Any) -> AgentState:
         "plan_step": 0,
         "plan_done": False,
         "pending_tool": None,
-        "plan_context": {},
         "data_file_paths": [],
         "data_tool_steps": [],
         "file_previews": {},
@@ -37,6 +36,7 @@ def sample_state(**overrides: Any) -> AgentState:
         "pending_chart_params": None,
         "process_repair_attempted": False,
         "worker_step": None,
+        "worker_index": None,
         "process_step": 0,
         "process_done": False,
         "report_steps": [],
@@ -46,8 +46,8 @@ def sample_state(**overrides: Any) -> AgentState:
         "knowledge_chunks": [],
         "meta_hits": [],
         "nodes_traversed": [],
-        "file_cache": [],
         "chart_artifacts": [],
+        "processed_data_refs": [],
     }
     base.update(overrides)
     return base

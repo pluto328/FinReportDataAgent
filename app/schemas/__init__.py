@@ -26,9 +26,7 @@ __all__ = [
     "ScoredMetaRecord",
     "SearchRequest",
     "SearchResponse",
-    "SessionFileCache",
     "StructuredFormat",
-    "ToolStepResult",
     "UploadResponse",
 ]
 
@@ -43,12 +41,10 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "ScoredMetaRecord": ("app.schemas.structured", "ScoredMetaRecord"),
     "NodeEnableFlags": ("app.schemas.structured", "NodeEnableFlags"),
     "PendingToolCall": ("app.schemas.structured", "PendingToolCall"),
-    "SessionFileCache": ("app.schemas.structured", "SessionFileCache"),
     "ChartType": ("app.schemas.structured", "ChartType"),
     "ChartSpec": ("app.schemas.structured", "ChartSpec"),
     "PlanStepResult": ("app.schemas.structured", "PlanStepResult"),
     "DataToolStepResult": ("app.schemas.structured", "DataToolStepResult"),
-    "ToolStepResult": ("app.schemas.structured", "ToolStepResult"),
     "ReportArtifact": ("app.schemas.structured", "ReportArtifact"),
     "AgentStatus": ("app.schemas.structured", "AgentStatus"),
     "ChatMessage": ("app.schemas.query", "ChatMessage"),
@@ -82,9 +78,7 @@ if TYPE_CHECKING:
         PlanStepResult,
         ReportArtifact,
         ScoredMetaRecord,
-        SessionFileCache,
         StructuredFormat,
-        ToolStepResult,
     )
 
 

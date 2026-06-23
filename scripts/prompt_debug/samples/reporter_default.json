@@ -1,6 +1,6 @@
 {
   "user_query": "总结检索到的研报观点",
-  "plan_context": {"step_count": 1, "latest": {"result": "ok"}},
+  "plan_steps": [],
   "data_process_plan": "无需额外处理",
   "report_steps": [],
   "report_step": 0,

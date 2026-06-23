@@ -68,15 +68,6 @@ class ProcessedDataRef(BaseModel):
     source_file: str = ""
 
 
-class SessionFileCache(BaseModel):
-    session_id: str
-    asset_id: str
-    file_path: str
-    processed_artifact_path: str = ""
-    md5: str = ""
-    last_used_at: datetime = Field(default_factory=datetime.utcnow)
-
-
 class ChartType(StrEnum):
     TABLE = "table"
     LINE = "line"
@@ -135,31 +126,6 @@ class FilePreviewEntry(BaseModel):
 
 FILE_PREVIEW_STORE_ROWS = 20
 DATA_PROCESSOR_PREVIEW_DISPLAY_ROWS = 3
-REPORTER_PREVIEW_DISPLAY_ROWS = 20
-
-
-class SqlStepResult(BaseModel):
-    step: int
-    sql: str
-    artifact_ref: ProcessedDataRef | None = None
-    error: str = ""
-
-
-class ContextBundle(BaseModel):
-    path: str = ""
-    preview: str = ""
-    char_count: int = 0
-    byte_size: int = 0
-
-
-class ToolStepResult(BaseModel):
-    """Alias kept for backward compatibility; prefer DataToolStepResult."""
-
-    step: int
-    tool_name: str
-    params: dict[str, Any] = Field(default_factory=dict)
-    result: dict[str, Any] = Field(default_factory=dict)
-    error: str = ""
 
 
 class ReportArtifact(BaseModel):

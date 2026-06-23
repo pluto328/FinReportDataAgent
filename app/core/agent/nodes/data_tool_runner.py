@@ -11,7 +11,6 @@ from app.core.agent.nodes._helpers import (
     normalize_data_tool_params,
     normalize_file_previews,
     strip_preview_from_tool_result,
-    summarize_data_tool_steps,
     upsert_file_preview,
 )
 from app.core.agent.state import AgentRuntime, AgentState
@@ -173,18 +172,11 @@ async def execute_data_tool(
         error=error,
         artifact_ref=artifact_ref,
     )
-    prior_steps = list(state.get("data_tool_steps") or [])
-    all_steps = [*prior_steps, step]
-    summary = summarize_data_tool_steps(all_steps)
-
     patch: dict[str, Any] = {
         "data_tool_steps": [step],
-        "process_step": step_no,
-        "process_result": summary or stored_result,
         "file_previews": file_previews,
     }
     if artifact_ref:
-        patch["processed_data"] = [artifact_ref]
         patch["processed_data_refs"] = [artifact_ref.path]
     if chart_item:
         patch["chart_artifacts"] = [chart_item]
