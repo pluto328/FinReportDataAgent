@@ -46,9 +46,9 @@ def load_state(path: str | None, **overrides: Any) -> AgentState:
 def build_runtime() -> AgentRuntime:
     settings = get_settings()
     llm = LLMClient(settings)
-    llm_planner = build_role_llm_client(settings, settings.llm_model_planner)
-    llm_data = build_role_llm_client(settings, settings.llm_model_data)
-    llm_reporter = build_role_llm_client(settings, settings.llm_model_reporter)
+    llm_planner = build_role_llm_client(settings, "planner")
+    llm_data = build_role_llm_client(settings, "data")
+    llm_reporter = build_role_llm_client(settings, "reporter")
     from app.core.retrieval.ensemble import EnsembleRetriever
     from app.core.retrieval.meta_ensemble import MetaEnsembleRetriever
 

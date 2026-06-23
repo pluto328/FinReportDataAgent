@@ -14,7 +14,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from app.config.settings import Settings
-from app.infrastructure.llm_client import LLMClient
+from app.infrastructure.llm_client import LLMClient, LLMRole, resolve_llm_role
 
 SAMPLE_PROMPT = """你是数据处理规划器。输出 JSON，不要其它内容：
 {"steps":[{"tool":"pandas_execute","params":{"file_paths":["资产负债表.csv"],"code":"result=df.head(5)","artifact_name":"top5.csv","artifact_description":"前五"}}]}
@@ -61,30 +61,40 @@ async def _bench_one(client: LLMClient, *, runs: int = 3) -> dict:
 
 async def main() -> None:
     settings = Settings()
-    models = DEFAULT_MODELS.copy()
-    for name in (
-        settings.llm_model,
-        settings.llm_model_planner,
-        settings.llm_model_data,
-        settings.llm_model_reporter,
-    ):
-        if name and name not in models:
-            models.append(name)
-    if not models:
-        print("Set LLM_MODEL (and optional LLM_MODEL_PLANNER/DATA/REPORTER) in .env")
-        return
+    roles: list[tuple[str, LLMRole | None]] = [
+        ("default", None),
+        ("planner", "planner"),
+        ("data", "data"),
+        ("reporter", "reporter"),
+    ]
     runs = 3
     print(f"Benchmark prompt length: {len(SAMPLE_PROMPT)} chars, runs={runs}\n")
     rows: list[dict] = []
-    for name in dict.fromkeys(models):
-        client = LLMClient(settings, model=name)
+    seen: set[tuple[str, str, str]] = set()
+    for label, role in roles:
+        if role is None:
+            client = LLMClient(settings)
+            key = (client.model, client.base_url, label)
+        else:
+            cfg = resolve_llm_role(settings, role)
+            client = LLMClient(settings, role=role)
+            key = (cfg.model, cfg.base_url, label)
+        if key in seen:
+            continue
+        seen.add(key)
         row = await _bench_one(client, runs=runs)
+        row["role"] = label
+        row["base_url"] = client.base_url
         rows.append(row)
         print(
-            f"{row['model']}: TTFT p50={row['ttft_p50_ms']}ms "
+            f"[{label}] {row['model']} @ {row['base_url']}: "
+            f"TTFT p50={row['ttft_p50_ms']}ms "
             f"total p50={row['total_p50_ms']}ms p95={row['total_p95_ms']}ms "
             f"json_valid={row['json_valid_rate']:.0%}"
         )
+    if not rows:
+        print("Set LLM_MODEL (and optional per-role LLM_* overrides) in .env")
+        return
     out = _ROOT / "eval" / "llm_benchmark.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")

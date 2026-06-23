@@ -58,19 +58,61 @@ class Settings(BaseSettings):
     llm_base_url: str = Field(default="")
     llm_api_key: str = Field(default="")
     llm_model: str = Field(default="")
+    llm_temperature: float = Field(default=0.1, ge=0.0, le=2.0)
     llm_model_planner: str = Field(
         default="",
         description="Optional model for task planner; falls back to llm_model",
     )
+    llm_base_url_planner: str = Field(
+        default="",
+        description="Optional base URL for planner; falls back to llm_base_url",
+    )
+    llm_api_key_planner: str = Field(
+        default="",
+        description="Optional API key for planner; falls back to llm_api_key",
+    )
+    llm_temperature_planner: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=2.0,
+        description="Optional temperature for planner; falls back to llm_temperature",
+    )
     llm_model_data: str = Field(
         default="",
-        description="Optional lighter model for data one-shot planning; falls back to llm_model",
+        description="Optional model for data one-shot planning; falls back to llm_model",
+    )
+    llm_base_url_data: str = Field(
+        default="",
+        description="Optional base URL for data phase; falls back to llm_base_url",
+    )
+    llm_api_key_data: str = Field(
+        default="",
+        description="Optional API key for data phase; falls back to llm_api_key",
+    )
+    llm_temperature_data: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=2.0,
+        description="Optional temperature for data phase; falls back to llm_temperature",
     )
     llm_model_reporter: str = Field(
         default="",
         description="Optional model for reporter; falls back to llm_model",
     )
-    llm_temperature: float = Field(default=0.1, ge=0.0, le=2.0)
+    llm_base_url_reporter: str = Field(
+        default="",
+        description="Optional base URL for reporter; falls back to llm_base_url",
+    )
+    llm_api_key_reporter: str = Field(
+        default="",
+        description="Optional API key for reporter; falls back to llm_api_key",
+    )
+    llm_temperature_reporter: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=2.0,
+        description="Optional temperature for reporter; falls back to llm_temperature",
+    )
     agent_process_mode: AgentProcessMode = Field(
         default="one_shot",
         description="react: ReAct data_processor loop; one_shot: single LLM plan then execute",
