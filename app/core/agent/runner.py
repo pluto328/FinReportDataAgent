@@ -120,6 +120,9 @@ async def sse_agent_events(
         try:
             await run_agent_stream(container, request, emitter)
         except Exception as exc:
+            from app.common.logger import logger
+
+            logger.exception("agent stream failed")
             await emitter.emit({"type": "error", "message": str(exc)})
         finally:
             await queue.put(None)
@@ -127,7 +130,11 @@ async def sse_agent_events(
     task = asyncio.create_task(_run())
     try:
         while True:
-            event = await queue.get()
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=20.0)
+            except asyncio.TimeoutError:
+                yield ": keepalive\n\n"
+                continue
             if event is None:
                 break
             yield f"data: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"

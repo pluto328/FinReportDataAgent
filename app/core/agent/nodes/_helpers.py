@@ -73,8 +73,14 @@ def append_node(state: AgentState, name: str) -> dict:
 
 
 def parse_llm_json(raw: str) -> dict[str, Any]:
-    match = re.search(r"\{.*\}", raw, re.S)
-    return json.loads(match.group(0) if match else raw)
+    text = (raw or "").strip()
+    if not text:
+        return {}
+    match = re.search(r"\{.*\}", text, re.S)
+    try:
+        return json.loads(match.group(0) if match else text)
+    except json.JSONDecodeError:
+        return {}
 
 
 def normalize_data_tool_params(

@@ -1161,7 +1161,21 @@
 
         ensureStreamingBubble();
         const data = await consumeSSE(res, streamState);
-        if (!data) throw new Error("未收到完成事件");
+        if (!data) {
+          if (streamState.answer && streamState.answer.trim()) {
+            endLlmConnecting(streamState);
+            setProgressWaiting("", false, streamState);
+            chatHistory.push({
+              role: "assistant",
+              content: streamState.answer.trim(),
+              meta: { status: "partial", session_id: sessionId },
+            });
+            saveChatToStorage();
+            showError("回答未完整返回，已展示已生成部分");
+            return;
+          }
+          throw new Error("未收到完成事件");
+        }
 
         if (data.session_id) {
           sessionId = data.session_id;
@@ -1200,7 +1214,22 @@
         saveChatToStorage();
       } catch (err) {
         console.error("[RAG] request failed:", err);
-        const errMsg = err.message || String(err);
+        let errMsg = err.message || String(err);
+        if (/Expecting value|JSON\.parse|Unexpected end of JSON/i.test(errMsg)) {
+          errMsg = "后端解析 LLM 响应失败或连接中断，请查看日志后重试";
+        }
+        if (streamState.answer && streamState.answer.trim()) {
+          endLlmConnecting(streamState);
+          setProgressWaiting("", false, streamState);
+          chatHistory.push({
+            role: "assistant",
+            content: streamState.answer.trim(),
+            meta: { status: "partial", session_id: sessionId },
+          });
+          saveChatToStorage();
+          showError(errMsg + "（已保留部分回答）");
+          return;
+        }
         chatHistory.push({
           role: "assistant",
           content:
