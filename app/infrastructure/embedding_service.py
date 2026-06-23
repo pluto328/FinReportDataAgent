@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import time
 from functools import lru_cache
 from pathlib import Path
@@ -20,6 +21,7 @@ _LOG_PATH = Path(__file__).resolve().parents[2] / "debug-72ff74.log"
 _SESSION = "72ff74"
 _MIN_TORCH = (2, 6)
 _EMBED_BATCH_SIZE = 8
+_model_load_lock = threading.Lock()
 
 
 def _torch_version_tuple() -> tuple[int, ...] | None:
@@ -67,7 +69,7 @@ def _agent_log(hypothesis_id: str, location: str, message: str, data: dict) -> N
 
 
 @lru_cache
-def _embed_model(name: str, device: str) -> SentenceTransformer:
+def _embed_model_cached(name: str, device: str) -> SentenceTransformer:
     settings = get_settings()
     configure_hf_hub(settings)
     from sentence_transformers import SentenceTransformer  # noqa: PLC0415
@@ -121,8 +123,13 @@ def _embed_model(name: str, device: str) -> SentenceTransformer:
     return model
 
 
+def _embed_model(name: str, device: str) -> SentenceTransformer:
+    with _model_load_lock:
+        return _embed_model_cached(name, device)
+
+
 @lru_cache
-def _rerank_model(name: str, device: str) -> CrossEncoder:
+def _rerank_model_cached(name: str, device: str) -> CrossEncoder:
     configure_hf_hub(get_settings())
     from sentence_transformers import CrossEncoder  # noqa: PLC0415
 
@@ -130,6 +137,11 @@ def _rerank_model(name: str, device: str) -> CrossEncoder:
     model = CrossEncoder(name, device=device)
     logger.info("rerank model {} ready", name)
     return model
+
+
+def _rerank_model(name: str, device: str) -> CrossEncoder:
+    with _model_load_lock:
+        return _rerank_model_cached(name, device)
 
 
 class EmbeddingService:

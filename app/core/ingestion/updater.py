@@ -226,13 +226,26 @@ class DocumentUpdater:
 
         logger.info("ingest structured: {} — extracting metadata…", path.name)
         records = self._meta.extract(path)
-        if records:
-            logger.info(
-                "ingest structured: {} — {} record(s), embedding + bulk index (please wait)…",
-                path.name,
-                len(records),
+        if not records:
+            logger.warning("skip structured {} — no metadata extracted (empty or unsupported)", path.name)
+            self._write_cache(
+                path,
+                {
+                    "doc_id": doc_id,
+                    "md5": md5,
+                    "kind": "structured",
+                    "source_path": source_path,
+                    "asset_ids": [],
+                    "count": 0,
+                },
             )
-            await self._index_meta_records(records, path.name)
+            return
+        logger.info(
+            "ingest structured: {} — {} record(s), embedding + bulk index (please wait)…",
+            path.name,
+            len(records),
+        )
+        await self._index_meta_records(records, path.name)
         asset_ids = [r.asset_id for r in records]
         self._write_cache(
             path,

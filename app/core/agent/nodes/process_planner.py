@@ -9,6 +9,7 @@ from app.core.agent.nodes._helpers import append_node
 from app.core.agent.nodes._node_log import node_logger
 from app.core.agent.prompts.data_process_one_shot_prompt import (
     build_data_process_one_shot_prompt,
+    build_fallback_process_steps,
     parse_one_shot_steps,
 )
 from app.core.agent.state import AgentRuntime, AgentState
@@ -48,13 +49,17 @@ async def process_planner_node(state: AgentState, runtime: AgentRuntime) -> dict
 
     steps = parse_one_shot_steps(raw, file_paths=list(paths))
     if not steps:
-        log.info("one-shot 未解析到步骤，标记完成")
-        return {
-            **append_node(state, "process_planner"),
-            "process_steps_plan": [],
-            "process_done": True,
-            "pending_tool": None,
-        }
+        steps = build_fallback_process_steps(state, list(paths))
+        if steps:
+            log.info("one-shot 使用 fallback 步骤", count=len(steps))
+        else:
+            log.info("one-shot 未解析到步骤，标记完成")
+            return {
+                **append_node(state, "process_planner"),
+                "process_steps_plan": [],
+                "process_done": True,
+                "pending_tool": None,
+            }
 
     log.info("one-shot 计划步骤", count=len(steps), tools=[s.get("tool") for s in steps])
     return {

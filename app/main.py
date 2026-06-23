@@ -67,8 +67,14 @@ async def lifespan(app: FastAPI):
     setup_logger(log_dir=str(settings.log_dir), level=settings.log_level)
     container = init_container(settings)
     sync_task: asyncio.Task | None = None
-    warmup_task = asyncio.create_task(_run_startup_warmups(container))
-    logger.info("startup embed + LLM warmup (background)")
+    if settings.startup_embed_warmup_before_ready:
+        logger.info("startup embed warmup (blocking before ready)")
+        await _run_embed_warmup(container)
+        warmup_task = asyncio.create_task(_run_llm_warmup(container))
+        logger.info("startup LLM warmup (background)")
+    else:
+        warmup_task = asyncio.create_task(_run_startup_warmups(container))
+        logger.info("startup embed + LLM warmup (background)")
 
     if settings.sync_on_startup:
         if settings.sync_in_background:

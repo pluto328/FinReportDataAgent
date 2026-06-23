@@ -44,7 +44,8 @@ class MetadataExtractor:
             return [self._feather(path, asset_id, md5, fmt)]
         if fmt == StructuredFormat.JSONL:
             return [self._jsonl(path, asset_id, md5, fmt)]
-        return [self._csv_tsv(path, asset_id, md5, fmt)]
+        record = self._csv_tsv(path, asset_id, md5, fmt)
+        return [record] if record else []
 
     def _build(
         self,
@@ -76,9 +77,14 @@ class MetadataExtractor:
             md5=md5,
         )
 
-    def _csv_tsv(self, path: Path, asset_id: str, md5: str, fmt: StructuredFormat) -> MetaRecord:
+    def _csv_tsv(self, path: Path, asset_id: str, md5: str, fmt: StructuredFormat) -> MetaRecord | None:
         sep = "\t" if fmt == StructuredFormat.TSV else ","
-        df = pd.read_csv(path, sep=sep, nrows=0)
+        try:
+            df = pd.read_csv(path, sep=sep, nrows=0)
+        except pd.errors.EmptyDataError:
+            return None
+        if not list(df.columns):
+            return None
         return self._build(path, asset_id, md5, fmt, list(df.columns))
 
     def _xlsx(self, path: Path, asset_id: str, md5: str, fmt: StructuredFormat) -> list[MetaRecord]:

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+from pathlib import Path
 from typing import Any
 
 from app.core.agent.nodes._helpers import (
@@ -13,6 +15,57 @@ from app.core.agent.nodes._helpers import (
     user_require_text,
 )
 from app.core.agent.state import AgentRuntime, AgentState
+
+_FILTER_NOISE = re.compile(
+    r"查一下|帮我|请|这支股票|的信息|给出|建议|和|风险|分析|怎么样|如何|什么|哪些|相关|资料|数据"
+)
+
+
+def _extract_filter_keyword(state: AgentState) -> str:
+    text = (user_require_text(state) or state.get("user_query") or "").strip()
+    cleaned = _FILTER_NOISE.sub(" ", text)
+    token = "".join(cleaned.split())
+    return token[:24]
+
+
+def build_fallback_process_steps(state: AgentState, file_paths: list[str]) -> list[dict[str, Any]]:
+    """Heuristic pandas steps when one-shot LLM plan fails or times out."""
+    keyword = _extract_filter_keyword(state)
+    steps: list[dict[str, Any]] = []
+    for fp in file_paths[:2]:
+        stem = Path(fp).stem
+        safe_kw = keyword.replace("\\", "\\\\").replace('"', '\\"')
+        if safe_kw:
+            code = (
+                f'kw = "{safe_kw}"\n'
+                "mask = df.astype(str).apply("
+                'lambda r: r.str.contains(kw, case=False, na=False).any(), axis=1)\n'
+                "result = df[mask] if mask.any() else df.head(100)"
+            )
+            desc = f"{stem} 关键词「{keyword}」筛选（fallback）"
+        else:
+            code = "result = df.head(100)"
+            desc = f"{stem} 前 100 行（fallback）"
+        steps.append(
+            {
+                "tool": "pandas_execute",
+                "params": {
+                    "file_paths": [fp],
+                    "code": code,
+                    "artifact_name": f"{stem}_fallback.csv",
+                    "artifact_description": desc,
+                },
+            }
+        )
+    out: list[dict[str, Any]] = []
+    for item in steps:
+        params = normalize_data_tool_params(
+            dict(item.get("params") or {}),
+            file_paths=file_paths,
+            tool_name=str(item.get("tool") or ""),
+        )
+        out.append({"tool": item["tool"], "params": params})
+    return out
 
 
 def _format_retrieved_files(paths: list[str]) -> str:
