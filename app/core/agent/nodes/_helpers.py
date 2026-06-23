@@ -644,6 +644,46 @@ def _coerce_bool(val: Any, default: bool) -> bool:
     return default
 
 
+def reconcile_chart_pipeline_flags(
+    state: AgentState,
+    flags: NodeEnableFlags,
+    *,
+    query: str,
+    text_q: str,
+    data_q: str,
+    settings: Settings | None = None,
+) -> tuple[NodeEnableFlags, str, str, list[str]]:
+    """Chart needs processed tabular data; ensure process/retrieve when planner only sets enable_chart."""
+    if not flags.enable_chart:
+        return flags, text_q, data_q, []
+
+    from app.core.session.process_artifact_store import get_session_catalog
+
+    s = settings or get_settings()
+    session_id = str(state.get("session_id") or "")
+    catalog = get_session_catalog(session_id, s)
+    catalog_paths = [p for p in catalog if p and Path(p).exists()]
+
+    new_flags = flags.model_copy()
+    new_text_q = text_q
+    new_data_q = data_q
+
+    if catalog_paths:
+        new_flags.enable_process = True
+
+    if not new_flags.enable_process:
+        if not new_flags.enable_data_retrieve:
+            new_flags.enable_data_retrieve = True
+        new_flags.enable_process = True
+        if not new_data_q.strip():
+            new_data_q = query.strip()
+
+    new_text_q, new_data_q = normalize_queries_for_flags(
+        new_text_q, new_data_q, new_flags, fallback=query
+    )
+    return new_flags, new_text_q, new_data_q, catalog_paths
+
+
 def apply_plan_flags(
     data: dict[str, Any],
     query: str,

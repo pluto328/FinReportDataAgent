@@ -68,7 +68,23 @@ def _sanitize_pandas_code(code: str) -> str:
 
 
 def _pandas_df_name(index: int) -> str:
-    return "df" if index == 0 else f"df{index + 1}"
+    """第1个文件 df，第2个 df1，第3个 df2 …（与常见 pandas 习惯一致）。"""
+    return "df" if index == 0 else f"df{index}"
+
+
+def _inject_pandas_legacy_df_aliases(local_ns: dict[str, Any], file_count: int) -> None:
+    """兼容旧 prompt 中的 df2/df3 命名（第2个文件曾写作 df2）。"""
+    if file_count >= 2 and "df1" in local_ns:
+        local_ns.setdefault("df2", local_ns["df1"])
+    if file_count >= 3 and "df2" in local_ns:
+        local_ns.setdefault("df3", local_ns["df2"])
+
+
+PANDAS_MULTI_FILE_VAR_RULE = (
+    "pandas 多文件变量（已注入 pd/np，禁止 import、注释、pd.read_*）："
+    "第1个文件→df，第2个→df1，第3个→df2，依此类推；"
+    "单文件只用 df；代码末尾须 result=...（DataFrame）。"
+)
 
 
 class PandasExecuteTool(BaseTool):
@@ -76,7 +92,7 @@ class PandasExecuteTool(BaseTool):
     description = (
         "对结构化数据执行 pandas 代码，可同时处理多个文件，结果 DataFrame 保存为新文件。"
         "入参：file_paths（绝对路径列表，可含多个检索到的原始数据文件）、"
-        "code（Python 代码，已预置 df/df2/df3…/pd/np，第一个文件为 df，第二个 df2，以此类推；"
+        "code（Python 代码，已预置 df/df1/df2…/pd/np，第一个文件为 df，第二个 df1，以此类推；"
         "禁止 import、pd.read_* 与任何注释）、"
         "artifact_name（必填，保存文件名含后缀，根据描述取名，不与已有中间数据文件名重复）、"
         "artifact_description（必填，产物中文说明，如「负债榜前五名数据」）。"
@@ -98,6 +114,7 @@ class PandasExecuteTool(BaseTool):
             local_ns: dict[str, Any] = {"pd": pd, "np": np}
             for i, fp in enumerate(paths):
                 local_ns[_pandas_df_name(i)] = read_table_full(fp)
+            _inject_pandas_legacy_df_aliases(local_ns, len(paths))
             sanitized = _sanitize_pandas_code(code)
             if not sanitized:
                 return {"error": "code is empty after sanitization", "error_code": "empty_code"}

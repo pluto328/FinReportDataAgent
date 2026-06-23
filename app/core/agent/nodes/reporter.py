@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 from app.core.agent.events import invoke_llm_decision
 from app.core.agent.nodes._debug_runtime import print_node_result, sample_state, stub_runtime
 from app.core.agent.nodes._helpers import (
     append_node,
+    collect_processed_artifact_paths,
     is_one_shot_mode,
     reporter_has_preloaded_data,
     summarize_data_tool_steps,
@@ -24,6 +26,27 @@ from app.core.session.history_store import append_session_turn
 from app.core.session.process_artifact_store import get_session_catalog, resolve_catalog_path
 from app.schemas.session import SessionTurnRecord
 from app.schemas.structured import NodeEnableFlags, PendingToolCall
+
+
+def _reporter_has_no_usable_context(
+    state: AgentState,
+    runtime: AgentRuntime,
+    *,
+    chunks: list,
+    meta: list,
+    process_result: Any,
+    plan_context: dict,
+    report_context: dict,
+    charts: list,
+) -> bool:
+    if chunks or meta or process_result or plan_context or report_context or charts:
+        return False
+    flags = state.get("node_flags")
+    if flags and (flags.enable_chart or flags.enable_report):
+        return False
+    if collect_processed_artifact_paths(state, runtime.settings):
+        return False
+    return True
 
 
 def _retrieval_insufficient(state: AgentState) -> bool:
@@ -220,7 +243,16 @@ async def reporter_node(state: AgentState, runtime: AgentRuntime) -> dict:
         retrieval_round=retrieval_round,
     )
 
-    if not chunks and not meta and not process_result and not plan_context and not report_context:
+    if _reporter_has_no_usable_context(
+        state,
+        runtime,
+        chunks=chunks,
+        meta=meta,
+        process_result=process_result,
+        plan_context=plan_context,
+        report_context=report_context,
+        charts=charts,
+    ):
         if _retrieval_insufficient(state):
             log.info("检索已启用但未达到 rerank 阈值", min_rerank_score=runtime.settings.min_rerank_score)
             log.end(status="not_found", retrieval_insufficient=True)

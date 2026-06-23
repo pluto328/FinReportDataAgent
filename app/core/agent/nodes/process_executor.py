@@ -126,8 +126,13 @@ async def _attempt_process_repair(
     start_step: int,
     log,
 ) -> tuple[dict[str, Any], dict | None, str]:
+    work = {**state, **merged}
+    recorded_step, recorded_error = _first_failed_tool_step(work)
+    if recorded_step:
+        failed_step = recorded_step
+        error = recorded_error or error
     repair_prompt = build_data_process_repair_prompt(
-        {**state, **merged},
+        work,  # type: ignore[arg-type]
         runtime,
         failed_step=failed_step,
         error=error,

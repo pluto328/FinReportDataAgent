@@ -159,7 +159,16 @@ def normalize_file_paths(file_path: str | list[str] | None = None, *, file_paths
 
 
 def _sql_view_name(index: int) -> str:
-    return "src" if index == 0 else f"src{index + 1}"
+    """第1张表 src，第2张 src1，第3张 src2 …"""
+    return "src" if index == 0 else f"src{index}"
+
+
+def _inject_sql_legacy_view_aliases(con, file_count: int) -> None:
+    """兼容旧 prompt 中「第2个表 src2、第3个 src3」写法。"""
+    if file_count == 2:
+        con.execute("CREATE VIEW src2 AS SELECT * FROM src1")
+    elif file_count >= 3:
+        con.execute("CREATE VIEW src3 AS SELECT * FROM src2")
 
 
 def execute_sql_on_files(file_paths: list[str], sql: str, *, limit: int | None = None) -> pd.DataFrame:
@@ -182,6 +191,7 @@ def execute_sql_on_files(file_paths: list[str], sql: str, *, limit: int | None =
             view = _sql_view_name(i)
             read_expr = _duckdb_read_expr(fp)
             con.execute(f"CREATE VIEW {view} AS SELECT * FROM {read_expr}")
+        _inject_sql_legacy_view_aliases(con, len(file_paths))
         wrapped = f"SELECT * FROM ({normalized}) AS q LIMIT {max_rows}"
         return con.execute(wrapped).df()
     finally:

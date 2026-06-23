@@ -8,7 +8,11 @@ from uuid import uuid4
 
 from app.core.agent.events import invoke_llm_decision
 from app.core.agent.nodes._debug_runtime import print_node_result, sample_state, stub_runtime
-from app.core.agent.nodes._helpers import append_node, extract_history_context
+from app.core.agent.nodes._helpers import (
+    append_node,
+    extract_history_context,
+    reconcile_chart_pipeline_flags,
+)
 from app.core.agent.nodes._node_log import node_logger
 from app.core.agent.prompts.planner_prompt import build_planner_prompt, parse_planner_response
 from app.core.agent.query_guard import (
@@ -131,13 +135,26 @@ async def planner_node(state: AgentState, runtime: AgentRuntime) -> dict:
         enables=_flags_line(flags),
     )
 
+    seed_paths: list[str] = []
     if action == "done" and flags:
+        before = _flags_line(flags)
+        flags, text_q, data_q, seed_paths = reconcile_chart_pipeline_flags(
+            state,
+            flags,
+            query=query,
+            text_q=text_q,
+            data_q=data_q,
+            settings=runtime.settings,
+        )
+        after = _flags_line(flags)
         log.info(
             "本次规划链路",
-            enables=_flags_line(flags),
+            enables=after,
             text_query=text_q,
             data_query=data_q,
         )
+        if after != before:
+            log.info("图表链路自动衔接", before=before, after=after, catalog_files=len(seed_paths))
 
     out: dict[str, Any] = {
         "user_query": query,
@@ -147,6 +164,9 @@ async def planner_node(state: AgentState, runtime: AgentRuntime) -> dict:
         "node_flags": flags,
         **append_node(state, "planner"),
     }
+    if seed_paths:
+        existing = [str(p) for p in (state.get("data_file_paths") or []) if p]
+        out["data_file_paths"] = existing + [p for p in seed_paths if p not in existing]
 
     if is_first:
         out.update(
