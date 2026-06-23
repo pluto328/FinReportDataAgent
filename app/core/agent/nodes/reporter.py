@@ -200,7 +200,7 @@ async def reporter_node(state: AgentState, runtime: AgentRuntime) -> dict:
     chunks = state.get("knowledge_chunks") or []
     meta = state.get("meta_hits") or []
     data_steps = state.get("data_tool_steps") or []
-    plan_context = state.get("plan_context") or summarize_plan_steps(state.get("plan_steps") or [])
+    plan_context = summarize_plan_steps(state.get("plan_steps") or [])
     process_result = state.get("process_result") or summarize_data_tool_steps(data_steps)
     report_steps = state.get("report_steps") or []
     report_step = state.get("report_step", 0)
@@ -430,7 +430,7 @@ async def reporter_node(state: AgentState, runtime: AgentRuntime) -> dict:
 
 
 async def debug_reporter_node() -> None:
-    state = sample_state(plan_context={"step_count": 1, "latest": {"result": "2026-01-01"}})
+    state = sample_state()
     runtime = stub_runtime()
     result = await reporter_node(state, runtime)
     print_node_result("reporter_node", result)
