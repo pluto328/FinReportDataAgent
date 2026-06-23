@@ -19,6 +19,7 @@ from app.core.agent.nodes._node_log import node_logger
 from app.core.agent.prompts.reporter_prompt import build_reporter_prompt, parse_reporter_response
 from app.core.agent.state import AgentRuntime, AgentState
 from app.core.agent.query_guard import INSUFFICIENT_DATA_MESSAGE
+from app.infrastructure.llm_warmup import warmup_pipeline_reporter
 from app.core.session.history_store import append_session_turn
 from app.core.session.process_artifact_store import get_session_catalog, resolve_catalog_path
 from app.schemas.session import SessionTurnRecord
@@ -261,6 +262,8 @@ async def reporter_node(state: AgentState, runtime: AgentRuntime) -> dict:
             "pending_tool": None,
             **append_node(state, "reporter"),
         }
+
+    await warmup_pipeline_reporter(runtime, runtime.settings)
 
     skip_read_data_file = report_step == 0 and reporter_has_preloaded_data(state)
     force_done = (

@@ -46,6 +46,10 @@ class LLMClient:
             if content:
                 yield content if isinstance(content, str) else str(content)
 
+    async def ping(self) -> None:
+        """Minimal API call to warm HTTP connection and model route."""
+        await self._llm.ainvoke("ping", max_tokens=1)
+
 
 def build_role_llm_client(settings: Settings, model_override: str) -> LLMClient:
     model = (model_override or settings.llm_model).strip()

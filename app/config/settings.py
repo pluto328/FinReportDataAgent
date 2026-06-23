@@ -141,6 +141,15 @@ class Settings(BaseSettings):
     meta_dense_weight: float = Field(default=0.6, ge=0.0)
     max_retrieval_rounds: int = Field(default=3, ge=1)
     max_plan_tool_steps: int = Field(default=1, ge=1)
+    planner_auto_load_history: bool = Field(
+        default=True,
+        description="Inject truncated session history into planner prompt; skip load_history_context tool",
+    )
+    planner_history_context_max_chars: int = Field(
+        default=800,
+        ge=0,
+        description="Max chars of history context tail injected into planner prompt",
+    )
     max_process_tool_steps: int = Field(default=20, ge=1)
     max_report_tool_steps: int = Field(default=5, ge=1)
     max_sql_retries: int = Field(default=3, ge=1)
@@ -153,6 +162,19 @@ class Settings(BaseSettings):
         default=120,
         ge=10,
         description="Timeout for planner/process repair/reporter LLM decision calls (seconds)",
+    )
+    llm_warmup_enabled: bool = Field(
+        default=True,
+        description="Ping LLM clients at startup and in agent pipeline to reduce cold-start latency",
+    )
+    llm_warmup_pipeline: bool = Field(
+        default=True,
+        description="In-pipeline ping: data LLM during planner, reporter LLM before reporter node",
+    )
+    llm_warmup_timeout_sec: int = Field(
+        default=15,
+        ge=3,
+        description="Timeout seconds for each LLM warmup ping",
     )
 
     # finalized after validation; not loaded from env

@@ -18,6 +18,7 @@ from app.core.agent.query_guard import (
     normalize_query,
 )
 from app.core.agent.state import AgentRuntime, AgentState
+from app.infrastructure.llm_warmup import schedule_pipeline_data_warmup
 from app.schemas.structured import NodeEnableFlags, PendingToolCall
 
 
@@ -86,6 +87,7 @@ async def planner_node(state: AgentState, runtime: AgentRuntime) -> dict:
 
     prompt = build_planner_prompt(state, runtime, force_no_tool=force_no_tool)
     log.debug("调用 LLM 规划（含入口校验）", plan_step=plan_step, entry_pass=is_entry_pass)
+    schedule_pipeline_data_warmup(runtime, runtime.settings)
     raw = await invoke_llm_decision(
         runtime.llm_for_planner(), prompt, phase="planner", stream_field="planning_thought"
     )
@@ -105,6 +107,12 @@ async def planner_node(state: AgentState, runtime: AgentRuntime) -> dict:
 
     if force_no_tool and action == "call_tool":
         log.info("规划步数已达上限，忽略 call_tool")
+        action = "done"
+        tool_name = ""
+        params = {}
+
+    if runtime.settings.planner_auto_load_history and action == "call_tool":
+        log.info("planner_auto_load_history 已启用，忽略 call_tool")
         action = "done"
         tool_name = ""
         params = {}

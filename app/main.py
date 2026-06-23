@@ -46,6 +46,19 @@ async def _run_embed_warmup(container) -> None:
         logger.exception("embed warmup failed")
 
 
+async def _run_llm_warmup(container) -> None:
+    try:
+        from app.infrastructure.llm_warmup import warmup_startup
+
+        await warmup_startup(container.agent_runtime, container.settings)
+    except Exception:
+        logger.exception("llm warmup failed")
+
+
+async def _run_startup_warmups(container) -> None:
+    await asyncio.gather(_run_embed_warmup(container), _run_llm_warmup(container))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
@@ -54,8 +67,8 @@ async def lifespan(app: FastAPI):
     setup_logger(log_dir=str(settings.log_dir), level=settings.log_level)
     container = init_container(settings)
     sync_task: asyncio.Task | None = None
-    warmup_task = asyncio.create_task(_run_embed_warmup(container))
-    logger.info("startup embed warmup (background)")
+    warmup_task = asyncio.create_task(_run_startup_warmups(container))
+    logger.info("startup embed + LLM warmup (background)")
 
     if settings.sync_on_startup:
         if settings.sync_in_background:
@@ -77,11 +90,11 @@ async def lifespan(app: FastAPI):
     yield
 
     if warmup_task is not None and not warmup_task.done():
-        logger.info("shutdown: waiting for embed warmup (max 120s)…")
+        logger.info("shutdown: waiting for startup warmups (max 120s)…")
         try:
             await asyncio.wait_for(warmup_task, timeout=120)
         except asyncio.TimeoutError:
-            logger.warning("embed warmup still running; cancelling")
+            logger.warning("startup warmups still running; cancelling")
             warmup_task.cancel()
             try:
                 await warmup_task
